@@ -2,14 +2,11 @@
 // Copyright (C) 2022  Philipp Emanuel Weidmann <pew@worldwidemann.com>
 
 use chrono::{DateTime, Utc};
-use duckdb::{params, Connection, Params};
+use duckdb::{params, Connection, Params, Transaction};
 use lazy_static::lazy_static;
 use wikidata::ClaimValueData;
 
-use crate::{
-    id::{f_id, l_id, p_id, q_id, s_id},
-    ENGLISH,
-};
+use crate::id::{f_id, l_id, p_id, q_id, s_id};
 
 lazy_static! {
     pub static ref VALUE_TYPES: Vec<Value> = vec![
@@ -102,8 +99,8 @@ impl Value {
         };
 
         let mut columns = vec![
-            ("id".to_owned(), "INTEGER NOT NULL".to_owned()),
-            ("property_id".to_owned(), "INTEGER NOT NULL".to_owned()),
+            ("property_id".to_owned(), "INTEGER".to_owned()),
+            ("value_id".to_owned(), "INTEGER ".to_owned()),
         ];
 
         columns.append(&mut value_columns);
@@ -111,11 +108,11 @@ impl Value {
         (table_name, columns)
     }
 
-    pub fn create_table(&self, connection: &Connection) -> duckdb::Result<()> {
+    pub fn create_table(&self, transaction: &Transaction) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
-        connection.execute_batch(&format!(
-            "CREATE TABLE {} ({});",
+        transaction.execute_batch(&format!(
+            "CREATE TABLE {}({});",
             table_name,
             columns
                 .iter()
@@ -186,7 +183,7 @@ impl Value {
             ),
             Time { time, precision } => self.store_params(
                 connection,
-                params!(id, property_id, time.timestamp(), precision),
+                params!(id, property_id, time.to_rfc3339(), precision),
             ),
             None => self.store_params(connection, params!(id, property_id)),
             Unknown => self.store_params(connection, params!(id, property_id)),
@@ -216,10 +213,9 @@ impl From<ClaimValueData> for Value {
             String(string) => Self::String(string),
             MonolingualText(text) => Self::String(text.text),
             MultilingualText(texts) => {
+                // TODO: does this work?
                 for text in texts {
-                    if text.lang.0 == ENGLISH.0 {
-                        return Self::String(text.text);
-                    }
+                    return Self::String(text.text);
                 }
                 Self::None
             }
