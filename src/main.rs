@@ -47,9 +47,9 @@ fn store_entity(transaction: &Transaction, entity: Entity) -> Result<(), Error> 
         .prepare_cached("INSERT INTO meta (id, label, description) VALUES (?1, ?2, ?3)")?
         .execute(params![
             match entity.id {
-                EntityId(Qid) => Qid.0,
-                PropertyId(Pid) => Pid.0,
-                LexemeId(Lid) => Lid.0,
+                EntityId(q_id) => q_id.0,
+                PropertyId(p_id) => p_id.0,
+                LexemeId(l_id) => l_id.0,
             },
             entity.labels.get(&LANG),
             entity.descriptions.get(&LANG),
@@ -62,13 +62,13 @@ fn insert_entities(transaction: &Transaction, lines: Vec<String>) -> Result<(), 
     let mut line_number = 0;
 
     for mut line in lines {
-        // TODO: skip delimiters
-        if line.is_empty() || line == "[" || line == "]" {
+        // We have to remove the delimiters so the JSON parsing is performed in a safe environment
+        if line.is_empty() || line.contains("[") || line.contains("]") {
             continue;
         }
 
         // We increase the line count by 1. Thus, errors can be prompted in a prettier way, indicating
-        // where in the document the error was invoked.
+        // where in the document the error was invoked
         line_number += 1;
 
         // Remove trailing comma. This is extremely important for simd_json to process the lines
@@ -94,13 +94,14 @@ fn insert_entities(transaction: &Transaction, lines: Vec<String>) -> Result<(), 
         };
 
         if let Err(error) = store_entity(&transaction, entity) {
-            eprintln!("\nError storing entity at line {}: {}", line_number, error);
+            eprintln!("Error storing entity at line {}: {}", line_number, error);
+            continue;
         }
     }
     Ok(())
 }
 
-fn main() -> Result<(), Error> {
+fn main() -> Result<(), String> {
     let args: Args = Args::parse();
 
     // TODO: check what expect is
@@ -113,33 +114,38 @@ fn main() -> Result<(), Error> {
 
     let database_path: &Path = Path::new(&args.database);
     if database_path.exists() {
-        // TODO: panic?
-        panic!("ERROR: Existing Databases cannot be handled by the application.");
+        return Err("Cannot open an already created database".to_string());
     }
 
     // We open a database connection. We are attempting to put the outcome of the JSON processing
     // into a .db file. As a result, the data must be saved to disk. In fact, the result will be
-    // saved in the path specified by the user.
-    let mut connection = Connection::open(database_path)?;
+    // saved in the path specified by the user
+    let mut connection = match Connection::open(database_path) {
+        Ok(connection) => connection,
+        Err(error) => return Err(format!("Error opening connection. {}", error)),
+    };
 
     // --**-- BEGIN TRANSACTION --**--
-    let transaction = connection.transaction()?;
+    let transaction = match connection.transaction() {
+        Ok(transaction) => transaction,
+        Err(error) => return Err(format!("Error creating Transaction. {}", error)),
+    };
 
     if let Err(error) = create_tables(&transaction) {
-        eprintln!("Error creating tables: {}", error);
-        return Err(error);
+        return Err(format!("Error creating tables. {}", error));
     }
 
     if let Err(error) = insert_entities(&transaction, lines) {
-        eprintln!("Error parsing Entity: {}", error);
-        return Err(error);
+        return Err(format!("Error parsing Entity. {}", error));
     }
 
-    transaction.commit()?;
+    if let Err(error) = transaction.commit() {
+        return Err(format!("Error committing transaction. {}", error));
+    };
     // --**-- END TRANSACTION --**--
 
     return match connection.close() {
         Ok(..) => Ok(()),
-        Err(error) => Err(error.1),
+        Err(error) => Err(format!("Error terminating connection. {}", error.1)),
     };
 }
