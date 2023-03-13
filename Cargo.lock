@@ -483,6 +483,7 @@ checksum = "aed949102c3efdcfdef9d00542dcd34549dff102f6a61537bcfd78534dd027db"
 dependencies = [
  "arrow",
  "cast",
+ "chrono",
  "fallible-iterator",
  "fallible-streaming-iterator",
  "hashlink",
