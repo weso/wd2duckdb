@@ -10,10 +10,10 @@ use std::path::Path;
 use wikidata::{Entity, Lang, Rank};
 
 use crate::id::{l_id, p_id, q_id};
-use crate::value::{Value, VALUE_TYPES};
+use crate::value::Table;
 
 // Allows the declaration of Global variables using functions inside of them. In this case,
-// lazy_static! environment allows calling the to_owned function.
+// lazy_static! environment allows calling the to_owned function
 lazy_static! {
     static ref LANG: Lang = Lang("en".to_owned());
 }
@@ -34,7 +34,7 @@ fn create_tables(transaction: &Transaction) -> Result<(), Error> {
     transaction // TODO: fix this two into one :(
         .execute_batch("CREATE TABLE meta(id INTEGER NOT NULL, label TEXT, description TEXT);")?;
 
-    for table in VALUE_TYPES.iter() {
+    for table in Table::iterator() {
         table.create_table(transaction)?;
     }
 
@@ -50,8 +50,8 @@ fn create_indices(transaction: &Transaction) -> duckdb::Result<()> {
         ",
     )?;
 
-    for value_type in VALUE_TYPES.iter() {
-        value_type.create_indices(transaction)?;
+    for table in Table::iterator() {
+        table.create_indices(transaction)?;
     }
 
     Ok(())
@@ -79,28 +79,21 @@ fn store_entity(transaction: &Transaction, entity: Entity) -> Result<(), Error> 
         // In case the claim value stores some outdated or wrong information, we ignore it. The
         // deprecated annotation indicates that this piece of information should be ignored
         if claim_value.rank != Rank::Deprecated {
-            Value::from(claim_value.data).store(transaction, id, p_id(property_id))?;
+            Table::from(claim_value.data).store(transaction, id, p_id(property_id))?;
         }
     }
 
     Ok(())
 }
 
-fn insert_entities(transaction: &Transaction, lines: Vec<String>) -> Result<(), Error> {
-    let mut line_number = 0;
-
-    for mut line in lines {
+fn insert_entities(transaction: &Transaction, mut lines: Vec<String>) -> Result<(), Error> {
+    for (line_number, mut line) in lines.iter_mut().enumerate() {
         // We have to remove the delimiters so the JSON parsing is performed in a safe environment
         if line.is_empty() || line.trim() == "[" || line.trim() == "]" {
             continue;
         }
-
-        // We increase the line count by 1. Thus, errors can be prompted in a prettier way, indicating
-        // where in the document the error was invoked
-        line_number += 1;
-
         // Remove trailing comma. This is extremely important for simd_json to process the lines
-        // properly
+        // properly. In general, a processing of the lines is required for simd_json to work
         if line.ends_with(',') {
             line.truncate(line.len() - 1);
         }
@@ -132,14 +125,30 @@ fn insert_entities(transaction: &Transaction, lines: Vec<String>) -> Result<(), 
 fn main() -> Result<(), String> {
     let args: Args = Args::parse();
 
-    // TODO: check what expect is
-    let json_file = File::open(&args.json).expect("Unable to read the given file.");
+    // We open the JSON file. Notice that some error handling has to be performed as errors may
+    // occur in the process of opening the file provided by the user :(
+    let json_file = match File::open(&args.json) {
+        Ok(file) => file,
+        Err(error) => return Err(format!("Error opening JSON file. {}", error)),
+    };
+
+    // Once the file is opened, the reader is initialized provided such a file, and the Lines of
+    // the file are retrieved. That is, a vector with n elements, being each of them a line in the
+    // JSON file. In case something goes wrong, an error is prompted to the user :(
     let reader = BufReader::new(json_file);
     let lines: Vec<String> = reader
         .lines()
-        .map(|l| l.expect("Unable to parse line."))
+        .map(|line| match line {
+            Ok(line) => line,
+            Err(error) => {
+                eprintln!("Unable to parse line. {}", error);
+                String::default()
+            }
+        })
         .collect();
 
+    // We have to check if the database already exists; that is, if the file given by the user is
+    // an already existing file, an error is prompted in screen; execution is resumed otherwise
     let database_path: &Path = Path::new(&args.database);
     if database_path.exists() {
         return Err("Cannot open an already created database".to_string());

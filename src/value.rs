@@ -4,37 +4,13 @@
 use chrono::{DateTime, Utc};
 use duckdb::{params, Params, Transaction};
 use lazy_static::lazy_static;
+use std::slice::Iter;
 use wikidata::ClaimValueData;
 
 use crate::id::{f_id, l_id, p_id, q_id, s_id};
 use crate::LANG;
 
-lazy_static! {
-    pub static ref VALUE_TYPES: Vec<Value> = vec![
-        Value::String(String::new()),
-        Value::Entity(0),
-        Value::Coordinates {
-            latitude: 0.0,
-            longitude: 0.0,
-            precision: 0.0,
-            globe_id: 0,
-        },
-        Value::Quantity {
-            amount: 0.0,
-            lower_bound: None,
-            upper_bound: None,
-            unit_id: None,
-        },
-        Value::Time {
-            time: Default::default(),
-            precision: 0,
-        },
-        Value::None,
-        Value::Unknown,
-    ];
-}
-
-pub enum Value {
+pub enum Table {
     String(String),
     Entity(u64),
     Coordinates {
@@ -57,9 +33,37 @@ pub enum Value {
     Unknown,
 }
 
-impl Value {
+impl Table {
+    pub fn iterator() -> Iter<'static, Table> {
+        lazy_static! {
+            static ref TABLES: [Table; 7] = [
+                Table::String(String::new()),
+                Table::Entity(0),
+                Table::Coordinates {
+                    latitude: 0.0,
+                    longitude: 0.0,
+                    precision: 0.0,
+                    globe_id: 0,
+                },
+                Table::Quantity {
+                    amount: 0.0,
+                    lower_bound: None,
+                    upper_bound: None,
+                    unit_id: None,
+                },
+                Table::Time {
+                    time: Default::default(),
+                    precision: 0,
+                },
+                Table::None,
+                Table::Unknown,
+            ];
+        }
+        TABLES.iter()
+    }
+
     fn table_definition(&self) -> (String, Vec<(String, String)>) {
-        use Value::*;
+        use Table::*;
 
         let mut columns = vec![
             ("id", "INTEGER NOT NULL"),
@@ -164,7 +168,7 @@ impl Value {
         id: u64,
         property_id: u64,
     ) -> duckdb::Result<()> {
-        use Value::*;
+        use Table::*;
 
         match self {
             String(string) => self.store_params(transaction, params![id, property_id, string]),
@@ -198,7 +202,7 @@ impl Value {
     }
 }
 
-impl From<ClaimValueData> for Value {
+impl From<ClaimValueData> for Table {
     fn from(claim_value_data: ClaimValueData) -> Self {
         use ClaimValueData::*;
 
