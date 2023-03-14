@@ -4,7 +4,7 @@ mod value;
 use clap::Parser;
 use duckdb::{params, Connection, Error, Transaction};
 use lazy_static::lazy_static;
-use std::fs::File;
+use std::fs::{remove_file, File};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use wikidata::{Entity, Lang, Rank};
@@ -31,8 +31,10 @@ struct Args {
 }
 
 fn create_tables(transaction: &Transaction) -> Result<(), Error> {
-    transaction // TODO: fix this two into one :(
-        .execute_batch("CREATE TABLE meta(id INTEGER NOT NULL, label TEXT, description TEXT);")?;
+    transaction // TODO: fix this two into one? :(
+        .execute_batch(
+            "CREATE TABLE meta(id INTEGER NOT NULL, label TEXT, description TEXT);",
+        )?;
 
     for table in Table::iterator() {
         table.create_table(transaction)?;
@@ -43,6 +45,7 @@ fn create_tables(transaction: &Transaction) -> Result<(), Error> {
 
 fn create_indices(transaction: &Transaction) -> duckdb::Result<()> {
     transaction.execute_batch(
+        // TODO: fix this two into one? :(
         "
         CREATE INDEX meta_id_index ON meta (id);
         CREATE INDEX meta_label_index ON meta (label);
@@ -66,6 +69,7 @@ fn store_entity(transaction: &Transaction, entity: Entity) -> Result<(), Error> 
         LexemeId(id) => l_id(id),
     };
 
+    // TODO: fix this two into one? :(
     transaction
         .prepare_cached("INSERT INTO meta(id, label, description) VALUES (?1, ?2, ?3)")?
         .execute(params![
@@ -122,6 +126,44 @@ fn insert_entities(transaction: &Transaction, mut lines: Vec<String>) -> Result<
     Ok(())
 }
 
+fn process(database_path: &Path, lines: Vec<String>) -> Result<(), String> {
+    // We open a database connection. We are attempting to put the outcome of the JSON processing
+    // into a .db file. As a result, the data must be saved to disk. In fact, the result will be
+    // saved in the path specified by the user
+    let mut connection = match Connection::open(database_path) {
+        Ok(connection) => connection,
+        Err(error) => return Err(format!("Error opening connection. {}", error)),
+    };
+
+    // --**-- BEGIN TRANSACTION --**--
+    let transaction = match connection.transaction() {
+        Ok(transaction) => transaction,
+        Err(error) => return Err(format!("Error creating Transaction. {}", error)),
+    };
+
+    if let Err(error) = create_tables(&transaction) {
+        return Err(format!("Error creating tables. {}", error));
+    }
+
+    if let Err(error) = insert_entities(&transaction, lines) {
+        return Err(format!("Error parsing Entity. {}", error));
+    }
+
+    if let Err(error) = create_indices(&transaction) {
+        return Err(format!("Error creating indices. {}", error));
+    }
+
+    if let Err(error) = transaction.commit() {
+        return Err(format!("Error committing transaction. {}", error));
+    };
+    // --**-- END TRANSACTION --**--
+
+    match connection.close() {
+        Ok(_) => Ok(()),
+        Err(error) => Err(format!("Error terminating connection. {}", error.1)),
+    }
+}
+
 fn main() -> Result<(), String> {
     let args: Args = Args::parse();
 
@@ -154,39 +196,13 @@ fn main() -> Result<(), String> {
         return Err("Cannot open an already created database".to_string());
     }
 
-    // We open a database connection. We are attempting to put the outcome of the JSON processing
-    // into a .db file. As a result, the data must be saved to disk. In fact, the result will be
-    // saved in the path specified by the user
-    let mut connection = match Connection::open(database_path) {
-        Ok(connection) => connection,
-        Err(error) => return Err(format!("Error opening connection. {}", error)),
-    };
-
-    // --**-- BEGIN TRANSACTION --**--
-    let transaction = match connection.transaction() {
-        Ok(transaction) => transaction,
-        Err(error) => return Err(format!("Error creating Transaction. {}", error)),
-    };
-
-    if let Err(error) = create_tables(&transaction) {
-        return Err(format!("Error creating tables. {}", error));
+    match process(database_path, lines) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            if let Err(error) = remove_file(database_path) {
+                return Err(format!("Error removing the database file. {}", error));
+            }
+            Err(error)
+        }
     }
-
-    if let Err(error) = insert_entities(&transaction, lines) {
-        return Err(format!("Error parsing Entity. {}", error));
-    }
-
-    if let Err(error) = create_indices(&transaction) {
-        return Err(format!("Error creating indices. {}", error));
-    }
-
-    if let Err(error) = transaction.commit() {
-        return Err(format!("Error committing transaction. {}", error));
-    };
-    // --**-- END TRANSACTION --**--
-
-    return match connection.close() {
-        Ok(..) => Ok(()),
-        Err(error) => Err(format!("Error terminating connection. {}", error.1)),
-    };
 }

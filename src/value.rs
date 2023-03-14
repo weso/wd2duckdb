@@ -62,7 +62,7 @@ impl Table {
         TABLES.iter()
     }
 
-    fn table_definition(&self) -> (String, Vec<(String, String)>) {
+    fn table_definition(&self) -> (&str, Vec<(&str, &str)>) {
         use Table::*;
 
         let mut columns = vec![
@@ -104,13 +104,7 @@ impl Table {
 
         columns.append(&mut value_columns);
 
-        (
-            table_name.parse().unwrap(), // TODO: can this be removed?
-            columns
-                .iter()
-                .map(|(key, value)| (key.to_string(), value.to_string()))
-                .collect(),
-        )
+        (table_name, columns)
     }
 
     pub fn create_table(&self, transaction: &Transaction) -> duckdb::Result<()> {
@@ -140,7 +134,7 @@ impl Table {
         Ok(())
     }
 
-    fn store_params(&self, transaction: &Transaction, params: impl Params) -> duckdb::Result<()> {
+    fn insert(&self, transaction: &Transaction, params: impl Params) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
         transaction
@@ -171,16 +165,14 @@ impl Table {
         use Table::*;
 
         match self {
-            String(string) => self.store_params(transaction, params![id, property_id, string]),
-            Entity(entity_id) => {
-                self.store_params(transaction, params![id, property_id, entity_id])
-            }
+            String(string) => self.insert(transaction, params![id, property_id, string]),
+            Entity(entity_id) => self.insert(transaction, params![id, property_id, entity_id]),
             Coordinates {
                 latitude,
                 longitude,
                 precision,
                 globe_id,
-            } => self.store_params(
+            } => self.insert(
                 transaction,
                 params![id, property_id, latitude, longitude, precision, globe_id],
             ),
@@ -189,15 +181,15 @@ impl Table {
                 lower_bound,
                 upper_bound,
                 unit_id,
-            } => self.store_params(
+            } => self.insert(
                 transaction,
                 params![id, property_id, amount, lower_bound, upper_bound, unit_id],
             ),
             Time { time, precision } => {
-                self.store_params(transaction, params![id, property_id, time, precision])
+                self.insert(transaction, params![id, property_id, time, precision])
             }
-            None => self.store_params(transaction, params![id, property_id]),
-            Unknown => self.store_params(transaction, params![id, property_id]),
+            None => self.insert(transaction, params![id, property_id]),
+            Unknown => self.insert(transaction, params![id, property_id]),
         }
     }
 }
