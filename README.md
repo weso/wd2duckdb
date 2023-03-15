@@ -15,7 +15,7 @@ TBD
 ## Usage
 
 ```
-wd2duckdb --json <JSON_FILE> --database <SQLITE_FILE>
+wd2duckdb --json <JSON_FILE> --database <DUCKDB_FILE>
 ```
 
 Use `-` as `<JSON_FILE>` to read from standard input instead of from a file.
@@ -23,7 +23,7 @@ This makes it possible to build a pipeline that processes JSON data as it is
 being decompressed, without having to decompress the full dump to disk:
 
 ```
-bzcat latest-all.json.bz2 | wd2duckdb --json - --database <SQLITE_FILE>
+bzcat latest-all.json.bz2 | wd2duckdb --json - --database <DUCKDB_FILE>
 ```
 
 ## Database structure
