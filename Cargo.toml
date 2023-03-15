@@ -1,28 +1,17 @@
 [package]
 name = "wd2duckdb"
 version = "0.1.0"
-authors = ["Philipp Emanuel Weidmann <pew@worldwidemann.com>", "Ángel Iglesias Préstamo <angel.iglesias.prestamo@gmail.com>"]
+authors = [ "Ángel Iglesias Préstamo <angel.iglesias.prestamo@gmail.com>" ]
 description = "Transform a Wikidata JSON dump into an DuckDB database"
-repository = "https://github.com/p-e-w/wd2sql"
+repository = "https://github.com/angelip2303/wd2duckdb"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 edition = "2021"
 
 [dependencies]
-lazy_static = "1.4.0"
-clap = { version = "4.0.26", features = ["derive"] }
+duckdb = { version = "0.7.1", features = ["bundled", "chrono"] }
 simd-json = "0.7.0"
+lazy_static = "1.4.0"
 wikidata = "0.3.0"
 chrono = "0.4.23"
-humansize = "2.1.2"
-humantime = "2.1.0"
-duckdb = "0.7.0"
-
-[target.'cfg(not(target_env = "msvc"))'.dependencies]
-jemallocator = "0.5.0"
-
-[profile.release]
-codegen-units = 1
-opt-level = 3
-lto = true
-debug = true
+clap = { version = "4.1.8", features = ["derive"] }

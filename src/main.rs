@@ -1,57 +1,51 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2022  Philipp Emanuel Weidmann <pew@worldwidemann.com>
-
 mod id;
 mod value;
 
-use std::{
-    fs::File,
-    io::{stdin, stdout, BufRead, BufReader, Read, Write},
-    path::Path,
-    process::ExitCode,
-    time::{Duration, Instant},
-};
-
 use clap::Parser;
-use duckdb::{params, Connection};
-use humansize::{format_size, DECIMAL};
-use humantime::format_duration;
+use duckdb::{params, Connection, Error, Transaction};
 use lazy_static::lazy_static;
-use wikidata::{Entity, Lang, Rank, WikiId};
+use std::fs::{remove_file, File};
+use std::io::{BufRead, BufReader};
+use std::path::Path;
+use wikidata::{Entity, Lang, Rank};
 
-use crate::{
-    id::{l_id, p_id, q_id},
-    value::{Value, VALUE_TYPES},
-};
+use crate::id::{l_id, p_id, q_id};
+use crate::value::Table;
 
-#[cfg(not(target_env = "msvc"))]
-#[global_allocator]
-static ALLOCATOR: jemallocator::Jemalloc = jemallocator::Jemalloc;
-
+// Allows the declaration of Global variables using functions inside of them. In this case,
+// lazy_static! environment allows calling the to_owned function
 lazy_static! {
-    static ref ENGLISH: Lang = Lang("en".to_owned());
+    static ref LANG: Lang = Lang("en".to_owned());
 }
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
-struct Arguments {
-    json_file: String,
-    sqlite_file: String,
+struct Args {
+    /// Input JSON file
+    #[arg(short, long)]
+    json: String,
+
+    /// File of the output database
+    #[arg(short, long)]
+    database: String,
 }
 
-fn create_tables(connection: &Connection) -> duckdb::Result<()> {
-    connection
-        .execute_batch("CREATE TABLE meta (id INTEGER NOT NULL, label TEXT, description TEXT);")?;
+fn create_tables(transaction: &Transaction) -> Result<(), Error> {
+    transaction // TODO: fix this two into one? :(
+        .execute_batch(
+            "CREATE TABLE meta(id INTEGER NOT NULL, label TEXT, description TEXT);",
+        )?;
 
-    for value_type in VALUE_TYPES.iter() {
-        value_type.create_table(connection)?;
+    for table in Table::iterator() {
+        table.create_table(transaction)?;
     }
 
     Ok(())
 }
 
-fn create_indices(connection: &Connection) -> duckdb::Result<()> {
-    connection.execute_batch(
+fn create_indices(transaction: &Transaction) -> duckdb::Result<()> {
+    transaction.execute_batch(
+        // TODO: fix this two into one? :(
         "
         CREATE INDEX meta_id_index ON meta (id);
         CREATE INDEX meta_label_index ON meta (label);
@@ -59,15 +53,15 @@ fn create_indices(connection: &Connection) -> duckdb::Result<()> {
         ",
     )?;
 
-    for value_type in VALUE_TYPES.iter() {
-        value_type.create_indices(connection)?;
+    for table in Table::iterator() {
+        table.create_indices(transaction)?;
     }
 
     Ok(())
 }
 
-fn store_entity(connection: &Connection, entity: Entity) -> duckdb::Result<()> {
-    use WikiId::*;
+fn store_entity(transaction: &Transaction, entity: Entity) -> Result<(), Error> {
+    use wikidata::WikiId::*;
 
     let id = match entity.id {
         EntityId(id) => q_id(id),
@@ -75,130 +69,43 @@ fn store_entity(connection: &Connection, entity: Entity) -> duckdb::Result<()> {
         LexemeId(id) => l_id(id),
     };
 
-    connection
-        .prepare_cached("INSERT INTO meta (id, label, description) VALUES (?1, ?2, ?3)")?
+    // TODO: fix this two into one? :(
+    transaction
+        .prepare_cached("INSERT INTO meta(id, label, description) VALUES (?1, ?2, ?3)")?
         .execute(params![
-            id,
-            entity.labels.get(&ENGLISH),
-            entity.descriptions.get(&ENGLISH),
+            // Allows the use of heterogeneous data as parameters to the prepared statement
+            id,                             // identifier of the entity
+            entity.labels.get(&LANG),       // label of the entity for a certain language
+            entity.descriptions.get(&LANG), // description of the entity for a certain language
         ])?;
 
-    for (pid, claim_value) in entity.claims {
+    for (property_id, claim_value) in entity.claims {
+        // In case the claim value stores some outdated or wrong information, we ignore it. The
+        // deprecated annotation indicates that this piece of information should be ignored
         if claim_value.rank != Rank::Deprecated {
-            Value::from(claim_value.data).store(connection, id, p_id(pid))?;
+            Table::from(claim_value.data).store(transaction, id, p_id(property_id))?;
         }
     }
 
     Ok(())
 }
 
-fn main() -> ExitCode {
-    let arguments = Arguments::parse();
-
-    if Path::new(&arguments.sqlite_file).exists() {
-        eprintln!(
-            "The database '{}' already exists. Updating an existing database is not supported. Choose a new filename for the database.",
-            arguments.sqlite_file,
-        );
-        return ExitCode::FAILURE;
-    }
-
-    let start_time = Instant::now();
-
-    let print_progress = |entity_count, byte_count, finished| {
-        print!(
-            "\x1B[2K\r{} entities, {} processed in {}{}",
-            entity_count,
-            format_size(byte_count, DECIMAL),
-            format_duration(Duration::new(start_time.elapsed().as_secs(), 0)),
-            ".".repeat(if finished { 1 } else { 3 }),
-        );
-
-        let _ = stdout().flush();
-    };
-
-    println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
-
-    let reader: Box<dyn Read> = if arguments.json_file == "-" {
-        Box::new(stdin())
-    } else {
-        Box::new(match File::open(&arguments.json_file) {
-            Ok(file) => file,
-            Err(error) => {
-                eprintln!(
-                    "Error opening JSON file '{}': {}",
-                    arguments.json_file, error,
-                );
-                return ExitCode::FAILURE;
-            }
-        })
-    };
-
-    let reader = BufReader::new(reader);
-
-    let connection = match Connection::open(&arguments.sqlite_file) {
-        Ok(connection) => connection,
-        Err(error) => {
-            eprintln!(
-                "Error opening SQLite database '{}': {}",
-                arguments.sqlite_file, error,
-            );
-            return ExitCode::FAILURE;
-        }
-    };
-
-    if let Err(error) = connection.pragma_update(None, "synchronous", &"OFF") {
-        eprintln!("Error disabling synchronous mode: {}", error);
-        return ExitCode::FAILURE;
-    }
-
-    if let Err(error) = connection.pragma_update(None, "journal_mode", &"OFF") {
-        eprintln!("Error disabling rollback journal: {}", error);
-        return ExitCode::FAILURE;
-    }
-
-    if let Err(error) = create_tables(&connection) {
-        eprintln!("Error creating tables: {}", error);
-        return ExitCode::FAILURE;
-    }
-
-    if let Err(error) = connection.execute_batch("BEGIN TRANSACTION;") {
-        eprintln!("Error starting transaction: {}", error);
-        return ExitCode::FAILURE;
-    }
-
-    let mut line_number: usize = 0;
-    let mut entity_count: usize = 0;
-    let mut byte_count: usize = 0;
-
-    for line in reader.lines() {
-        line_number += 1;
-
-        let mut line = match line {
-            Ok(line) => line,
-            Err(error) => {
-                eprintln!("\nError reading line {}: {}", line_number, error);
-                continue;
-            }
-        };
-
-        let line_length = line.len();
-        byte_count += line_length;
-
-        // Skip array delimiters at beginning and end of dump.
-        if line.is_empty() || line == "[" || line == "]" {
+fn insert_entities(transaction: &Transaction, mut lines: Vec<String>) -> Result<(), Error> {
+    for (line_number, mut line) in lines.iter_mut().enumerate() {
+        // We have to remove the delimiters so the JSON parsing is performed in a safe environment
+        if line.is_empty() || line.trim() == "[" || line.trim() == "]" {
             continue;
         }
-
-        // Remove trailing comma.
+        // Remove trailing comma. This is extremely important for simd_json to process the lines
+        // properly. In general, a processing of the lines is required for simd_json to work
         if line.ends_with(',') {
-            line.truncate(line_length - 1);
+            line.truncate(line.len() - 1);
         }
 
         let value = match unsafe { simd_json::from_str(&mut line) } {
             Ok(value) => value,
             Err(error) => {
-                eprintln!("\nError parsing JSON at line {}: {}", line_number, error);
+                eprintln!("Error parsing JSON at line {}: {}", line_number, error);
                 continue;
             }
         };
@@ -206,50 +113,96 @@ fn main() -> ExitCode {
         let entity = match Entity::from_json(value) {
             Ok(entity) => entity,
             Err(error) => {
-                eprintln!(
-                    "\nError parsing entity from JSON at line {}: {:?}",
-                    line_number, error,
-                );
+                eprintln!("Error parsing JSON at line {}: {:?}", line_number, error);
                 continue;
             }
         };
 
-        if let Err(error) = store_entity(&connection, entity) {
-            eprintln!("\nError storing entity at line {}: {}", line_number, error);
+        if let Err(error) = store_entity(&transaction, entity) {
+            eprintln!("Error storing entity at line {}: {}", line_number, error);
+            continue;
         }
+    }
+    Ok(())
+}
 
-        entity_count += 1;
+fn process(database_path: &Path, lines: Vec<String>) -> Result<(), String> {
+    // We open a database connection. We are attempting to put the outcome of the JSON processing
+    // into a .db file. As a result, the data must be saved to disk. In fact, the result will be
+    // saved in the path specified by the user
+    let mut connection = match Connection::open(database_path) {
+        Ok(connection) => connection,
+        Err(error) => return Err(format!("Error opening connection. {}", error)),
+    };
 
-        if entity_count % 1000 == 0 {
-            if let Err(error) = connection.execute_batch(
-                "
-                END TRANSACTION;
-                BEGIN TRANSACTION;
-                ",
-            ) {
-                eprintln!(
-                    "\nError committing transaction at line {}: {}",
-                    line_number, error,
-                );
+    // --**-- BEGIN TRANSACTION --**--
+    let transaction = match connection.transaction() {
+        Ok(transaction) => transaction,
+        Err(error) => return Err(format!("Error creating Transaction. {}", error)),
+    };
+
+    if let Err(error) = create_tables(&transaction) {
+        return Err(format!("Error creating tables. {}", error));
+    }
+
+    if let Err(error) = insert_entities(&transaction, lines) {
+        return Err(format!("Error parsing Entity. {}", error));
+    }
+
+    if let Err(error) = create_indices(&transaction) {
+        return Err(format!("Error creating indices. {}", error));
+    }
+
+    if let Err(error) = transaction.commit() {
+        return Err(format!("Error committing transaction. {}", error));
+    };
+    // --**-- END TRANSACTION --**--
+
+    match connection.close() {
+        Ok(_) => Ok(()),
+        Err(error) => Err(format!("Error terminating connection. {}", error.1)),
+    }
+}
+
+fn main() -> Result<(), String> {
+    let args: Args = Args::parse();
+
+    // We open the JSON file. Notice that some error handling has to be performed as errors may
+    // occur in the process of opening the file provided by the user :(
+    let json_file = match File::open(&args.json) {
+        Ok(file) => file,
+        Err(error) => return Err(format!("Error opening JSON file. {}", error)),
+    };
+
+    // Once the file is opened, the reader is initialized provided such a file, and the Lines of
+    // the file are retrieved. That is, a vector with n elements, being each of them a line in the
+    // JSON file. In case something goes wrong, an error is prompted to the user :(
+    let reader = BufReader::new(json_file);
+    let lines: Vec<String> = reader
+        .lines()
+        .map(|line| match line {
+            Ok(line) => line,
+            Err(error) => {
+                eprintln!("Unable to parse line. {}", error);
+                String::default()
             }
+        })
+        .collect();
 
-            print_progress(entity_count, byte_count, false);
+    // We have to check if the database already exists; that is, if the file given by the user is
+    // an already existing file, an error is prompted in screen; execution is resumed otherwise
+    let database_path: &Path = Path::new(&args.database);
+    if database_path.exists() {
+        return Err("Cannot open an already created database".to_string());
+    }
+
+    match process(database_path, lines) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            if let Err(error) = remove_file(database_path) {
+                return Err(format!("Error removing the database file. {}", error));
+            }
+            Err(error)
         }
     }
-
-    if let Err(error) = connection.execute_batch("END TRANSACTION;") {
-        eprintln!("\nError committing transaction: {}", error);
-    }
-
-    print_progress(entity_count, byte_count, true);
-
-    println!("\nCreating indices...");
-
-    if let Err(error) = create_indices(&connection) {
-        eprintln!("Error creating indices: {}", error);
-    }
-
-    println!("Finished.");
-
-    ExitCode::SUCCESS
 }

@@ -2,41 +2,15 @@
 // Copyright (C) 2022  Philipp Emanuel Weidmann <pew@worldwidemann.com>
 
 use chrono::{DateTime, Utc};
-use duckdb::{params, Connection, Params};
+use duckdb::{params, Params, Transaction};
 use lazy_static::lazy_static;
+use std::slice::Iter;
 use wikidata::ClaimValueData;
 
-use crate::{
-    id::{f_id, l_id, p_id, q_id, s_id},
-    ENGLISH,
-};
+use crate::id::{f_id, l_id, p_id, q_id, s_id};
+use crate::LANG;
 
-lazy_static! {
-    pub static ref VALUE_TYPES: Vec<Value> = vec![
-        Value::String(String::new()),
-        Value::Entity(0),
-        Value::Coordinates {
-            latitude: 0.0,
-            longitude: 0.0,
-            precision: 0.0,
-            globe_id: 0,
-        },
-        Value::Quantity {
-            amount: 0.0,
-            lower_bound: None,
-            upper_bound: None,
-            unit_id: None,
-        },
-        Value::Time {
-            time: Default::default(),
-            precision: 0,
-        },
-        Value::None,
-        Value::Unknown,
-    ];
-}
-
-pub enum Value {
+pub enum Table {
     String(String),
     Entity(u64),
     Coordinates {
@@ -59,62 +33,84 @@ pub enum Value {
     Unknown,
 }
 
-impl Value {
-    fn table_definition(&self) -> (String, Vec<(String, String)>) {
-        use Value::*;
+impl Table {
+    pub fn iterator() -> Iter<'static, Table> {
+        lazy_static! {
+            static ref TABLES: [Table; 7] = [
+                Table::String(String::new()),
+                Table::Entity(0),
+                Table::Coordinates {
+                    latitude: 0.0,
+                    longitude: 0.0,
+                    precision: 0.0,
+                    globe_id: 0,
+                },
+                Table::Quantity {
+                    amount: 0.0,
+                    lower_bound: None,
+                    upper_bound: None,
+                    unit_id: None,
+                },
+                Table::Time {
+                    time: Default::default(),
+                    precision: 0,
+                },
+                Table::None,
+                Table::Unknown,
+            ];
+        }
+        TABLES.iter()
+    }
+
+    fn table_definition(&self) -> (&str, Vec<(&str, &str)>) {
+        use Table::*;
+
+        let mut columns = vec![
+            ("id", "INTEGER NOT NULL"),
+            ("property_id", "INTEGER NOT NULL"),
+        ];
 
         let (table_name, mut value_columns) = match self {
-            String(_) => (
-                "string".to_owned(),
-                vec![("string".to_owned(), "TEXT NOT NULL".to_owned())],
-            ),
-            Entity(_) => (
-                "entity".to_owned(),
-                vec![("entity_id".to_owned(), "INTEGER NOT NULL".to_owned())],
-            ),
+            String(_) => ("string", vec![("string", "TEXT NOT NULL")]),
+            Entity(_) => ("entity", vec![("entity_id", "INTEGER NOT NULL")]),
             Coordinates { .. } => (
-                "coordinates".to_owned(),
+                "coordinates",
                 vec![
-                    ("latitude".to_owned(), "REAL NOT NULL".to_owned()),
-                    ("longitude".to_owned(), "REAL NOT NULL".to_owned()),
-                    ("precision".to_owned(), "REAL NOT NULL".to_owned()),
-                    ("globe_id".to_owned(), "INTEGER NOT NULL".to_owned()),
+                    ("latitude", "REAL NOT NULL"),
+                    ("longitude", "REAL NOT NULL"),
+                    ("precision", "REAL NOT NULL"),
+                    ("globe_id", "INTEGER NOT NULL"),
                 ],
             ),
             Quantity { .. } => (
-                "quantity".to_owned(),
+                "quantity",
                 vec![
-                    ("amount".to_owned(), "REAL NOT NULL".to_owned()),
-                    ("lower_bound".to_owned(), "REAL".to_owned()),
-                    ("upper_bound".to_owned(), "REAL".to_owned()),
-                    ("unit_id".to_owned(), "INTEGER".to_owned()),
+                    ("amount", "REAL NOT NULL"),
+                    ("lower_bound", "REAL"),
+                    ("upper_bound", "REAL"),
+                    ("unit_id", "INTEGER"),
                 ],
             ),
             Time { .. } => (
-                "time".to_owned(),
+                "time",
                 vec![
-                    ("time".to_owned(), "DATETIME NOT NULL".to_owned()),
-                    ("precision".to_owned(), "INTEGER NOT NULL".to_owned()),
+                    ("time", "DATETIME NOT NULL"),
+                    ("precision", "INTEGER NOT NULL"),
                 ],
             ),
-            None => ("none".to_owned(), vec![]),
-            Unknown => ("unknown".to_owned(), vec![]),
+            None => ("none", vec![]),
+            Unknown => ("unknown", vec![]),
         };
-
-        let mut columns = vec![
-            ("id".to_owned(), "INTEGER NOT NULL".to_owned()),
-            ("property_id".to_owned(), "INTEGER NOT NULL".to_owned()),
-        ];
 
         columns.append(&mut value_columns);
 
         (table_name, columns)
     }
 
-    pub fn create_table(&self, connection: &Connection) -> duckdb::Result<()> {
+    pub fn create_table(&self, transaction: &Transaction) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
-        connection.execute_batch(&format!(
+        transaction.execute_batch(&format!(
             "CREATE TABLE {} ({});",
             table_name,
             columns
@@ -125,11 +121,11 @@ impl Value {
         ))
     }
 
-    pub fn create_indices(&self, connection: &Connection) -> duckdb::Result<()> {
+    pub fn create_indices(&self, transaction: &Transaction) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
         for (column_name, _) in columns {
-            connection.execute_batch(&format!(
+            transaction.execute_batch(&format!(
                 "CREATE INDEX {}_{}_index ON {} ({});",
                 table_name, column_name, table_name, column_name,
             ))?;
@@ -138,10 +134,10 @@ impl Value {
         Ok(())
     }
 
-    fn store_params(&self, connection: &Connection, params: impl Params) -> duckdb::Result<()> {
+    fn insert(&self, transaction: &Transaction, params: impl Params) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
-        connection
+        transaction
             .prepare_cached(&format!(
                 "INSERT INTO {} ({}) VALUES ({})",
                 table_name,
@@ -160,41 +156,45 @@ impl Value {
         Ok(())
     }
 
-    pub fn store(&self, connection: &Connection, id: u64, property_id: u64) -> duckdb::Result<()> {
-        use Value::*;
+    pub fn store(
+        &self,
+        transaction: &Transaction,
+        id: u64,
+        property_id: u64,
+    ) -> duckdb::Result<()> {
+        use Table::*;
 
         match self {
-            String(string) => self.store_params(connection, params!(id, property_id, string)),
-            Entity(entity_id) => self.store_params(connection, params!(id, property_id, entity_id)),
+            String(string) => self.insert(transaction, params![id, property_id, string]),
+            Entity(entity_id) => self.insert(transaction, params![id, property_id, entity_id]),
             Coordinates {
                 latitude,
                 longitude,
                 precision,
                 globe_id,
-            } => self.store_params(
-                connection,
-                params!(id, property_id, latitude, longitude, precision, globe_id),
+            } => self.insert(
+                transaction,
+                params![id, property_id, latitude, longitude, precision, globe_id],
             ),
             Quantity {
                 amount,
                 lower_bound,
                 upper_bound,
                 unit_id,
-            } => self.store_params(
-                connection,
-                params!(id, property_id, amount, lower_bound, upper_bound, unit_id),
+            } => self.insert(
+                transaction,
+                params![id, property_id, amount, lower_bound, upper_bound, unit_id],
             ),
-            Time { time, precision } => self.store_params(
-                connection,
-                params!(id, property_id, time.timestamp(), precision),
-            ),
-            None => self.store_params(connection, params!(id, property_id)),
-            Unknown => self.store_params(connection, params!(id, property_id)),
+            Time { time, precision } => {
+                self.insert(transaction, params![id, property_id, time, precision])
+            }
+            None => self.insert(transaction, params![id, property_id]),
+            Unknown => self.insert(transaction, params![id, property_id]),
         }
     }
 }
 
-impl From<ClaimValueData> for Value {
+impl From<ClaimValueData> for Table {
     fn from(claim_value_data: ClaimValueData) -> Self {
         use ClaimValueData::*;
 
@@ -217,7 +217,7 @@ impl From<ClaimValueData> for Value {
             MonolingualText(text) => Self::String(text.text),
             MultilingualText(texts) => {
                 for text in texts {
-                    if text.lang.0 == ENGLISH.0 {
+                    if text.lang.0 == LANG.0 {
                         return Self::String(text.text);
                     }
                 }
