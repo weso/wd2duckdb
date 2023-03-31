@@ -1,15 +1,18 @@
 mod id;
 mod value;
+mod my_reader;
 
 use clap::Parser;
 use duckdb::{params, Connection, Error, Transaction};
+use humantime::format_duration;
 use lazy_static::lazy_static;
-use std::fs::{remove_file, File};
-use std::io::{BufRead, BufReader};
+use std::io::{stdout, Write};
 use std::path::Path;
+use std::time::{Duration, Instant};
 use wikidata::{Entity, Lang, Rank};
 
 use crate::id::{l_id, p_id, q_id};
+use crate::my_reader::BufReader;
 use crate::value::Table;
 
 // Allows the declaration of Global variables using functions inside of them. In this case,
@@ -90,43 +93,66 @@ fn store_entity(transaction: &Transaction, entity: Entity) -> Result<(), Error> 
     Ok(())
 }
 
-fn insert_entities(transaction: &Transaction, mut lines: Vec<String>) -> Result<(), Error> {
-    for (line_number, mut line) in lines.iter_mut().enumerate() {
-        // We have to remove the delimiters so the JSON parsing is performed in a safe environment
-        if line.is_empty() || line.trim() == "[" || line.trim() == "]" {
-            continue;
-        }
-        // Remove trailing comma. This is extremely important for simd_json to process the lines
-        // properly. In general, a processing of the lines is required for simd_json to work
-        if line.ends_with(',') {
-            line.truncate(line.len() - 1);
-        }
-
-        let value = match unsafe { simd_json::from_str(&mut line) } {
-            Ok(value) => value,
-            Err(error) => {
-                eprintln!("Error parsing JSON at line {}: {}", line_number, error);
-                continue;
-            }
-        };
-
-        let entity = match Entity::from_json(value) {
-            Ok(entity) => entity,
-            Err(error) => {
-                eprintln!("Error parsing JSON at line {}: {:?}", line_number, error);
-                continue;
-            }
-        };
-
-        if let Err(error) = store_entity(&transaction, entity) {
-            eprintln!("Error storing entity at line {}: {}", line_number, error);
-            continue;
-        }
+fn insert_entity(transaction: &Transaction, mut line: String, line_number: i32) -> Result<(), String> {
+    // We have to remove the delimiters so the JSON parsing is performed in a safe environment
+    line = line.trim().parse().unwrap(); // we remove possible blanks both at the end or at the beginning of each line
+    if line.is_empty() || line == "[" || line == "]" {
+        return Ok(()); // we just skip the line. It is not needed :D
     }
+
+    // Remove the trailing comma and newline character. This is extremely important for simd_json to
+    // process the lines properly. In general, a processing of the lines is required for simd_json
+    // to work. We are making sure that the last character is a closing bracket; that is, the line
+    // is a valid JSON
+    while !line.ends_with('}') {
+        line.pop();
+    }
+
+    let value = match unsafe { simd_json::from_str( &mut line) } {
+        Ok(value) => value,
+        Err(error) => return Err(format!("Error parsing JSON at line {}: {}", line_number, error))
+    };
+
+    let entity = match Entity::from_json(value) {
+        Ok(entity) => entity,
+        Err(error) => return Err(format!("Error parsing Entity at line {}: {:?}", line_number, error))
+    };
+
+    if let Err(error) = store_entity(&transaction, entity) {
+        return Err(format!("Error storing entity at line {}: {}", line_number, error));
+    }
+
     Ok(())
 }
 
-fn process(database_path: &Path, lines: Vec<String>) -> Result<(), String> {
+fn main() -> Result<(), String> {
+    let args: Args = Args::parse();
+
+    let start_time = Instant::now();
+    let print_progress = |line_number| {
+        print!(
+            "\x1B[2K\r{} entities processed in {}.",
+            line_number,
+            format_duration(Duration::new(start_time.elapsed().as_secs(), 0))
+        );
+        let _ = stdout().flush();
+    };
+
+    // We open the JSON file. Notice that some error handling has to be performed as errors may
+    // occur in the process of opening the file provided by the user :(
+    let mut buffer = String::new();
+    let mut reader = match BufReader::open(args.json) {
+        Ok(reader) => reader,
+        Err(error) => return Err(format!("Error opening JSON file. {}", error)),
+    };
+
+    // We have to check if the database already exists; that is, if the file given by the user is
+    // an already existing file, an error is prompted in screen; execution is resumed otherwise
+    let database_path: &Path = Path::new(&args.database);
+    if database_path.exists() {
+        return Err("Cannot open an already created database".to_string());
+    }
+
     // We open a database connection. We are attempting to put the outcome of the JSON processing
     // into a .db file. As a result, the data must be saved to disk. In fact, the result will be
     // saved in the path specified by the user
@@ -145,8 +171,27 @@ fn process(database_path: &Path, lines: Vec<String>) -> Result<(), String> {
         return Err(format!("Error creating tables. {}", error));
     }
 
-    if let Err(error) = insert_entities(&transaction, lines) {
-        return Err(format!("Error parsing Entity. {}", error));
+    // Once the file is opened, the reader is initialized provided such a file. After so, we start
+    // to read such a file line-by-line. That is, provided a JSON line with n lines, we read one at
+    // at a time. This is a requirement for us to read huge files that cannot be loaded into memory
+    // as a whole. Instead of creating a Vec<String> with all the lines of the file, we read all of
+    // them separately :D
+    let mut line_number = 0;
+    while let Some(line) = reader.read_line(&mut buffer) {
+        line_number += 1;
+
+        let line = match line {
+            Ok(line) => line.to_owned(),
+            Err(error) => {
+                eprintln!("Error parsing line {}. {}", line_number, error);
+                continue;
+            }
+        };
+
+        if let Err(error) = insert_entity(&transaction, line, line_number) {
+            eprintln!("{}", error);
+            continue;
+        }
     }
 
     if let Err(error) = create_indices(&transaction) {
@@ -158,51 +203,10 @@ fn process(database_path: &Path, lines: Vec<String>) -> Result<(), String> {
     };
     // --**-- END TRANSACTION --**--
 
+    print_progress(line_number);
+
     match connection.close() {
         Ok(_) => Ok(()),
         Err(error) => Err(format!("Error terminating connection. {}", error.1)),
-    }
-}
-
-fn main() -> Result<(), String> {
-    let args: Args = Args::parse();
-
-    // We open the JSON file. Notice that some error handling has to be performed as errors may
-    // occur in the process of opening the file provided by the user :(
-    let json_file = match File::open(&args.json) {
-        Ok(file) => file,
-        Err(error) => return Err(format!("Error opening JSON file. {}", error)),
-    };
-
-    // Once the file is opened, the reader is initialized provided such a file, and the Lines of
-    // the file are retrieved. That is, a vector with n elements, being each of them a line in the
-    // JSON file. In case something goes wrong, an error is prompted to the user :(
-    let reader = BufReader::new(json_file);
-    let lines: Vec<String> = reader
-        .lines()
-        .map(|line| match line {
-            Ok(line) => line,
-            Err(error) => {
-                eprintln!("Unable to parse line. {}", error);
-                String::default()
-            }
-        })
-        .collect();
-
-    // We have to check if the database already exists; that is, if the file given by the user is
-    // an already existing file, an error is prompted in screen; execution is resumed otherwise
-    let database_path: &Path = Path::new(&args.database);
-    if database_path.exists() {
-        return Err("Cannot open an already created database".to_string());
-    }
-
-    match process(database_path, lines) {
-        Ok(_) => Ok(()),
-        Err(error) => {
-            if let Err(error) = remove_file(database_path) {
-                return Err(format!("Error removing the database file. {}", error));
-            }
-            Err(error)
-        }
     }
 }
