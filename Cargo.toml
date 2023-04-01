@@ -9,9 +9,10 @@ license = "GPL-3.0-or-later"
 edition = "2021"
 
 [dependencies]
-duckdb = { version = "0.7.1", features = ["bundled", "chrono"] }
-simd-json = "0.7.0"
-lazy_static = "1.4.0"
-wikidata = "0.3.0"
 chrono = "0.4.23"
 clap = { version = "4.1.8", features = ["derive"] }
+duckdb = { version = "0.7.1", features = ["bundled", "chrono"] }
+humantime = "2.1.0"
+lazy_static = "1.4.0"
+simd-json = "0.7.0"
+wikidata = "0.3.0"
