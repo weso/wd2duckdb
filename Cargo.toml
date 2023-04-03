@@ -11,8 +11,10 @@ edition = "2021"
 [dependencies]
 chrono = "0.4.23"
 clap = { version = "4.1.8", features = ["derive"] }
-duckdb = { version = "0.7.1", features = ["bundled", "chrono"] }
+duckdb = { version = "0.7.1", features = ["bundled", "chrono", "r2d2"] }
 humantime = "2.1.0"
 lazy_static = "1.4.0"
+r2d2 = "0.8.10"
+rayon = "1.7"
 simd-json = "0.7.0"
 wikidata = "0.3.0"

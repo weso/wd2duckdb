@@ -2,9 +2,10 @@
 // Copyright (C) 2022  Philipp Emanuel Weidmann <pew@worldwidemann.com>
 
 use chrono::{DateTime, Utc};
-use duckdb::{params, Params, Transaction};
+use duckdb::{DuckdbConnectionManager, params, Params};
 use lazy_static::lazy_static;
 use std::slice::Iter;
+use r2d2::PooledConnection;
 use wikidata::ClaimValueData;
 
 use crate::id::{f_id, l_id, p_id, q_id, s_id};
@@ -107,10 +108,10 @@ impl Table {
         (table_name, columns)
     }
 
-    pub fn create_table(&self, transaction: &Transaction) -> duckdb::Result<()> {
+    pub fn create_table(&self, connection: &PooledConnection<DuckdbConnectionManager>) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
-        transaction.execute_batch(&format!(
+        connection.execute_batch(&format!(
             "CREATE TABLE {} ({});",
             table_name,
             columns
@@ -121,11 +122,11 @@ impl Table {
         ))
     }
 
-    pub fn create_indices(&self, transaction: &Transaction) -> duckdb::Result<()> {
+    pub fn create_indices(&self, connection: &PooledConnection<DuckdbConnectionManager>) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
         for (column_name, _) in columns {
-            transaction.execute_batch(&format!(
+            connection.execute_batch(&format!(
                 "CREATE INDEX {}_{}_index ON {} ({});",
                 table_name, column_name, table_name, column_name,
             ))?;
@@ -134,10 +135,10 @@ impl Table {
         Ok(())
     }
 
-    fn insert(&self, transaction: &Transaction, params: impl Params) -> duckdb::Result<()> {
+    fn insert(&self, connection: &PooledConnection<DuckdbConnectionManager>, params: impl Params) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
-        transaction
+        connection
             .prepare_cached(&format!(
                 "INSERT INTO {} ({}) VALUES ({})",
                 table_name,
@@ -158,22 +159,22 @@ impl Table {
 
     pub fn store(
         &self,
-        transaction: &Transaction,
+        connection: &PooledConnection<DuckdbConnectionManager>,
         id: u64,
         property_id: u64,
     ) -> duckdb::Result<()> {
         use Table::*;
 
         match self {
-            String(string) => self.insert(transaction, params![id, property_id, string]),
-            Entity(entity_id) => self.insert(transaction, params![id, property_id, entity_id]),
+            String(string) => self.insert(connection, params![id, property_id, string]),
+            Entity(entity_id) => self.insert(connection, params![id, property_id, entity_id]),
             Coordinates {
                 latitude,
                 longitude,
                 precision,
                 globe_id,
             } => self.insert(
-                transaction,
+                connection,
                 params![id, property_id, latitude, longitude, precision, globe_id],
             ),
             Quantity {
@@ -182,14 +183,14 @@ impl Table {
                 upper_bound,
                 unit_id,
             } => self.insert(
-                transaction,
+                connection,
                 params![id, property_id, amount, lower_bound, upper_bound, unit_id],
             ),
             Time { time, precision } => {
-                self.insert(transaction, params![id, property_id, time, precision])
+                self.insert(connection, params![id, property_id, time, precision])
             }
-            None => self.insert(transaction, params![id, property_id]),
-            Unknown => self.insert(transaction, params![id, property_id]),
+            None => self.insert(connection, params![id, property_id]),
+            Unknown => self.insert(connection, params![id, property_id]),
         }
     }
 }
