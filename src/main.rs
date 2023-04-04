@@ -102,6 +102,8 @@ fn insert_entity(
     mut line: String,
     line_number: i32
 ) -> Result<(), String> {
+    // We try to open a connection. This should be done as we are in the context of a multi-threaded
+    // program. Thus, for us to avoid races, a new connection from the pool has to be retrieved :D
     let conn = match connection {
         Ok(connection) => connection,
         Err(error) => return Err(format!("Error opening connection. {}", error)),
@@ -124,11 +126,16 @@ fn insert_entity(
         line.pop();
     }
 
+    // By using simd_json we parse the string to a Value. In this regard, the line has to be a valid
+    // JSON by itself. As we are sure that Wikidata dumps are an enumeration of JSON objects: one
+    // per line in the document, we can use this algorithm for retrieving each entity in the dump
     let value = match unsafe { simd_json::from_str(&mut line) } {
         Ok(value) => value,
         Err(error) => return Err(format!("Error parsing JSON at line {}: {}", line_number, error))
     };
 
+    // Once we have the JSON value parsed, we try to transform it into a Wikidata entity, that will
+    // be stored later. This is basically the same object as before, but arranged in a better manner
     let entity = match Entity::from_json(value) {
         Ok(entity) => entity,
         Err(error) => return Err(format!("Error parsing Entity at line {}: {:?}", line_number, error))
@@ -154,7 +161,8 @@ fn main() -> Result<(), String> {
     let args: Args = Args::parse();
 
     // We have to check if the database already exists; that is, if the file given by the user is
-    // an already existing file, an error is prompted in screen; execution is resumed otherwise
+    // an already existing file, an error is prompted in screen and execution is halted; otherwise,
+    // execution is resumed :D
     let database_path: &Path = Path::new(&args.database);
     if database_path.exists() {
         return Err("Cannot open an already created database".to_string());
@@ -169,8 +177,8 @@ fn main() -> Result<(), String> {
     let reader = BufReader::new(json_file);
 
     // We open a database connection. We are attempting to put the outcome of the JSON processing
-    // into a .db file. As a result, the data must be saved to disk. In fact, the result will be
-    // saved in the path specified by the user
+    // into a .duckdb file. As a result, the data must be saved to disk. In fact, the result will be
+    // saved in the path specified by the user. Some IOErrors may occurs and should be handled
     let manager = match DuckdbConnectionManager::file(database_path) {
         Ok(manager) => manager,
         Err(error) => return Err(format!("Error creating the DuckDB connection manager. {}", error)),
@@ -184,18 +192,26 @@ fn main() -> Result<(), String> {
         Err(error) => return Err(format!("Error opening connection. {}", error)),
     };
 
+    // -*- JSON to .DUCKDB ALGORITHM Starts here -*-
+
+    // We start computing the initial time at which it starts the execution of the algorithm
     let start_time = Instant::now();
 
+    // We create the tables of the database so the elements can be inserted. For us to do so, we
+    // are creating one table per each primitive type that can be stored in Wikidata. For more
+    // details, refer to value.rs file in this same directory
     if let Err(error) = create_tables(&connection) {
         return Err(format!("Error creating tables. {}", error));
     }
 
     reader
-        .lines()
-        .par_bridge()
-        .for_each(
+        .lines() // we retrieve the iterator over the lines in the JSON file
+        .par_bridge() // we create a bridge for parallel execution
+        .for_each( // for each line in the parallel iterator ...
             |line|
+                // try to insert the entity in the database and handle errors appropriately
                 if let Err(error) =  insert_entity( & pool.get(), line.unwrap(), 0) {
+                    // do not halt execution in case an error happens, just warn the user :D
                     eprintln!("Error inserting entity. {}", error);
                 }
         );
@@ -203,6 +219,8 @@ fn main() -> Result<(), String> {
     if let Err(error) = create_indices(&connection) {
         return Err(format!("Error creating indices. {}", error));
     }
+
+    // -*- JSON to .DUCKDB ALGORITHM Ends here -*-
 
     print_progress(0, start_time);
 
