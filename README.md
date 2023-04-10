@@ -28,7 +28,9 @@ bzcat latest-all.json.bz2 | wd2duckdb --json - --database <DUCKDB_FILE>
 
 ## Database structure
 
-TBD
+<p align="center">
+  <img src="https://user-images.githubusercontent.com/65736636/230960535-6d3b5187-b8a0-4072-bddf-19273ab7e692.png" />
+</p>
 
 ## Acknowledgments
 
