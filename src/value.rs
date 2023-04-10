@@ -1,6 +1,3 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2022  Philipp Emanuel Weidmann <pew@worldwidemann.com>
-
 use chrono::{DateTime, Utc};
 use duckdb::{DuckdbConnectionManager, params, Params};
 use lazy_static::lazy_static;
@@ -12,8 +9,8 @@ use crate::id::{f_id, l_id, p_id, q_id, s_id};
 use crate::LANG;
 
 pub enum Table {
-    String(String),
     Entity(u64),
+    String(String),
     Coordinates {
         latitude: f64,
         longitude: f64,
@@ -30,8 +27,8 @@ pub enum Table {
         time: DateTime<Utc>,
         precision: u8,
     },
-    None,
     Unknown,
+    None
 }
 
 impl Table {
@@ -57,24 +54,37 @@ impl Table {
                     precision: 0,
                 },
                 Table::None,
-                Table::Unknown,
+                Table::Unknown
             ];
         }
         TABLES.iter()
     }
 
     fn table_definition(&self) -> (&str, Vec<(&str, &str)>) {
-        use Table::*;
+        // According to the so-called database structure we are going to describe in here, all the
+        // edges will have the following 3 columns: src_id, property_id and dst_id. Not only that,
+        // but implementing inheritance in a relational database can be done through several
+        // alternatives. What we have chosen so far is 'Table-Per-Concrete', where each entity will
+        // have its corresponding fully formed table with no references to any of the other sub-types.
+        // Note that all of those will have the same 3 columns: src_id, property_id and dst_id.
+        // However, due to the fact that some datum can possibly reference a yet not parsed value,
+        // we cannot use primary keys. Hence, indices will be created for easier accessing :D
 
         let mut columns = vec![
-            ("id", "INTEGER NOT NULL"),
+            ("src_id", "INTEGER NOT NULL"),
             ("property_id", "INTEGER NOT NULL"),
+            ("dst_id", "INTEGER NOT NULL")
         ];
 
+        // For the sake of simplicity, those entities that annotate no additional value; that is,
+        // Entity, None and Unknown, will be all of those stored in the same table called Edge. Thus,
+        // we are avoiding the creation of 3 tables with the exact same structure as a whole. More
+        // in more, notice that the dst_id of all the relationships but for Entity, will be the
+        // src_id, as we are annotating additional information to the node itself :D
+
         let (table_name, mut value_columns) = match self {
-            String(_) => ("string", vec![("string", "TEXT NOT NULL")]),
-            Entity(_) => ("entity", vec![("entity_id", "INTEGER NOT NULL")]),
-            Coordinates { .. } => (
+            Table::String(_) => ("string", vec![("string", "TEXT NOT NULL")]),
+            Table::Coordinates { .. } => (
                 "coordinates",
                 vec![
                     ("latitude", "REAL NOT NULL"),
@@ -83,7 +93,7 @@ impl Table {
                     ("globe_id", "INTEGER NOT NULL"),
                 ],
             ),
-            Quantity { .. } => (
+            Table::Quantity { .. } => (
                 "quantity",
                 vec![
                     ("amount", "REAL NOT NULL"),
@@ -92,16 +102,19 @@ impl Table {
                     ("unit_id", "INTEGER"),
                 ],
             ),
-            Time { .. } => (
+            Table::Time { .. } => (
                 "time",
                 vec![
                     ("time", "DATETIME NOT NULL"),
                     ("precision", "INTEGER NOT NULL"),
                 ],
             ),
-            None => ("none", vec![]),
-            Unknown => ("unknown", vec![]),
+            _ => ("edge", vec![]), // For Entity, Unknown and None we create only one table...
         };
+
+        // Lastly, we have to extend the primary keys with the rest of the body of the entities.
+        // In this manner, we can create as many tables as we wish, all of them following the
+        // previously described inheritance policy :D
 
         columns.append(&mut value_columns);
 
@@ -110,9 +123,8 @@ impl Table {
 
     pub fn create_table(&self, connection: &PooledConnection<DuckdbConnectionManager>) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
-
         connection.execute_batch(&format!(
-            "CREATE TABLE {} ({});",
+            "CREATE TABLE IF NOT EXISTS {} ({});",
             table_name,
             columns
                 .iter()
@@ -126,10 +138,18 @@ impl Table {
         let (table_name, columns) = self.table_definition();
 
         for (column_name, _) in columns {
-            connection.execute_batch(&format!(
-                "CREATE INDEX {}_{}_index ON {} ({});",
-                table_name, column_name, table_name, column_name,
-            ))?;
+            // We are interested in creating indices only for two columns: src_id and dst_id. Hence,
+            // we check if the column_name is any of those. In some previous version loads of clutter
+            // was created by creating indices for all the columns :(
+            if column_name == "src_id" || column_name == "dst_id" {
+                connection.execute_batch(&format!(
+                    "CREATE INDEX IF NOT EXISTS {}_{}_index ON {} ({});",
+                    table_name,
+                    column_name,
+                    table_name,
+                    column_name,
+                ))?;
+            }
         }
 
         Ok(())
@@ -160,37 +180,61 @@ impl Table {
     pub fn store(
         &self,
         connection: &PooledConnection<DuckdbConnectionManager>,
-        id: u64,
+        src_id: u64,
         property_id: u64,
     ) -> duckdb::Result<()> {
-        use Table::*;
+        // Note the schema of the Database we are working with. In this regard, we have two main
+        // entities which include Vertex and Edge; those act as the two pieces that together form
+        // a Knowledge Graph out of the JSON dump we are willing to process. Apart from that, we
+        // need to store data types that are more complex; that is, qualifiers may annotate the
+        // relationships and we want to preserve that kind of information. Thus, some entities arise
+        // which model those extensions to the data model. This may be expanded in the future ;D
+        //
+        // ACK: See https://github.com/angelip2303/wd2duckdb#database-structure for a more detailed
+        // description of the data model we are creating with this tool
 
         match self {
-            String(string) => self.insert(connection, params![id, property_id, string]),
-            Entity(entity_id) => self.insert(connection, params![id, property_id, entity_id]),
-            Coordinates {
+            Table::Entity(dst_id) => self.insert(
+                connection,
+                params![src_id, property_id, dst_id]
+            ),
+            Table::None => self.insert(
+                connection,
+                params![src_id, property_id, src_id]
+            ),
+            Table::Unknown => self.insert(
+                connection,
+                params![src_id, property_id, src_id]
+            ),
+            Table::String(string) => self.insert(
+                connection,
+                params![src_id, property_id, src_id, string]
+            ),
+            Table::Coordinates {
                 latitude,
                 longitude,
                 precision,
                 globe_id,
             } => self.insert(
                 connection,
-                params![id, property_id, latitude, longitude, precision, globe_id],
+                params![src_id, property_id, src_id, latitude, longitude, precision, globe_id],
             ),
-            Quantity {
+            Table::Quantity {
                 amount,
                 lower_bound,
                 upper_bound,
                 unit_id,
             } => self.insert(
                 connection,
-                params![id, property_id, amount, lower_bound, upper_bound, unit_id],
+                params![src_id, property_id, src_id, amount, lower_bound, upper_bound, unit_id],
             ),
-            Time { time, precision } => {
-                self.insert(connection, params![id, property_id, time, precision])
-            }
-            None => self.insert(connection, params![id, property_id]),
-            Unknown => self.insert(connection, params![id, property_id]),
+            Table::Time {
+                time,
+                precision
+            } => self.insert(
+                connection,
+                params![src_id, property_id, src_id, time, precision]
+            )
         }
     }
 }

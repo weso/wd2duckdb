@@ -38,10 +38,7 @@ struct Args {
 }
 
 fn create_tables(connection: &PooledConnection<DuckdbConnectionManager>) -> Result<(), Error> {
-    connection // TODO: fix this two into one? :(
-        .execute_batch(
-            "CREATE TABLE meta(id INTEGER NOT NULL, label TEXT, description TEXT);",
-        )?;
+    connection.execute_batch("CREATE TABLE vertices (id INTEGER, label TEXT, description TEXT);")?;
 
     for table in Table::iterator() {
         table.create_table(connection)?;
@@ -51,14 +48,10 @@ fn create_tables(connection: &PooledConnection<DuckdbConnectionManager>) -> Resu
 }
 
 fn create_indices(connection: &PooledConnection<DuckdbConnectionManager>) -> duckdb::Result<()> {
-    connection.execute_batch(
-        // TODO: fix this two into one? :(
-        "
-        CREATE INDEX meta_id_index ON meta (id);
-        CREATE INDEX meta_label_index ON meta (label);
-        CREATE INDEX meta_description_index ON meta (description);
-        ",
-    )?;
+    // We are interested only in creating an index for the id column in the vertices table, as we
+    // will only query over it. The rest of the data that is stored just extends the knowledge that
+    // we store, but has no relevance in regards with future processing :D
+    connection.execute_batch("CREATE INDEX vertices_id_index ON vertices (id);",)?;
 
     for table in Table::iterator() {
         table.create_indices(connection)?;
@@ -70,7 +63,7 @@ fn create_indices(connection: &PooledConnection<DuckdbConnectionManager>) -> duc
 fn store_entity(connection: &PooledConnection<DuckdbConnectionManager>, entity: Entity) -> Result<(), Error> {
     use wikidata::WikiId::*;
 
-    let id = match entity.id {
+    let src_id = match entity.id {
         EntityId(id) => q_id(id),
         PropertyId(id) => p_id(id),
         LexemeId(id) => l_id(id),
@@ -78,10 +71,10 @@ fn store_entity(connection: &PooledConnection<DuckdbConnectionManager>, entity: 
 
     // TODO: fix this two into one? :(
     connection
-        .prepare_cached("INSERT INTO meta(id, label, description) VALUES (?1, ?2, ?3)")?
+        .prepare_cached("INSERT INTO vertices (id, label, description) VALUES (?1, ?2, ?3)")?
         .execute(params![
             // Allows the use of heterogeneous data as parameters to the prepared statement
-            id,                             // identifier of the entity
+            src_id,                             // identifier of the entity
             entity.labels.get(&LANG),       // label of the entity for a certain language
             entity.descriptions.get(&LANG), // description of the entity for a certain language
         ])?;
@@ -90,7 +83,7 @@ fn store_entity(connection: &PooledConnection<DuckdbConnectionManager>, entity: 
         // In case the claim value stores some outdated or wrong information, we ignore it. The
         // deprecated annotation indicates that this piece of information should be ignored
         if claim_value.rank != Rank::Deprecated {
-            Table::from(claim_value.data).store(connection, id, p_id(property_id))?;
+            Table::from(claim_value.data).store(connection, src_id, p_id(property_id))?;
         }
     }
 
