@@ -38,7 +38,7 @@ struct Args {
 }
 
 fn create_tables(connection: &PooledConnection<DuckdbConnectionManager>) -> Result<(), Error> {
-    connection.execute_batch("CREATE TABLE vertices (id INTEGER, label TEXT, description TEXT);")?;
+    connection.execute_batch("CREATE TABLE vertex (id INTEGER, label TEXT, description TEXT);")?;
 
     for table in Table::iterator() {
         table.create_table(connection)?;
@@ -51,7 +51,7 @@ fn create_indices(connection: &PooledConnection<DuckdbConnectionManager>) -> duc
     // We are interested only in creating an index for the id column in the vertices table, as we
     // will only query over it. The rest of the data that is stored just extends the knowledge that
     // we store, but has no relevance in regards with future processing :D
-    connection.execute_batch("CREATE INDEX vertices_id_index ON vertices (id);",)?;
+    connection.execute_batch("CREATE INDEX vertex_id_index ON vertex (id);",)?;
 
     for table in Table::iterator() {
         table.create_indices(connection)?;
@@ -71,7 +71,7 @@ fn store_entity(connection: &PooledConnection<DuckdbConnectionManager>, entity: 
 
     // TODO: fix this two into one? :(
     connection
-        .prepare_cached("INSERT INTO vertices (id, label, description) VALUES (?1, ?2, ?3)")?
+        .prepare_cached("INSERT INTO vertex (id, label, description) VALUES (?1, ?2, ?3)")?
         .execute(params![
             // Allows the use of heterogeneous data as parameters to the prepared statement
             src_id,                             // identifier of the entity

@@ -85,7 +85,7 @@ impl Table {
         let (table_name, mut value_columns) = match self {
             Table::String(_) => ("string", vec![("string", "TEXT NOT NULL")]),
             Table::Coordinates { .. } => (
-                "coordinates",
+                "coordinate",
                 vec![
                     ("latitude", "REAL NOT NULL"),
                     ("longitude", "REAL NOT NULL"),
