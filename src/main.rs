@@ -37,6 +37,20 @@ struct Args {
     database: String,
 }
 
+/// The function creates tables in a database connection using SQL queries.
+///
+/// Arguments:
+///
+/// * `connection`: The `connection` parameter is a reference to a
+/// `PooledConnection` object from the `DuckdbConnectionManager` type. This object
+/// represents a connection to a DuckDB database and is used to execute SQL queries
+/// and commands on that database. The `create_tables` function uses this connection
+/// to create the tables according to the Wikidata entity data model.
+///
+/// Returns:
+///
+/// The function `create_tables` is returning a `Result` with an empty tuple `()` as
+/// the success value and an `Error` as the error value.
 fn create_tables(connection: &PooledConnection<DuckdbConnectionManager>) -> Result<(), Error> {
     connection.execute_batch("CREATE TABLE vertex (id INTEGER, label TEXT, description TEXT);")?;
 
@@ -47,6 +61,21 @@ fn create_tables(connection: &PooledConnection<DuckdbConnectionManager>) -> Resu
     Ok(())
 }
 
+/// The function creates an index for the id column in the vertices table and calls
+/// the create_indices function for other tables.
+///
+/// Arguments:
+///
+/// * `connection`: A reference to a `PooledConnection` object from the
+/// `DuckdbConnectionManager` type, which represents a connection to a DuckDB
+/// database.
+///
+/// Returns:
+///
+/// The function `create_indices` is returning a `duckdb::Result<()>`, which is a
+/// type alias for `Result<(), duckdb::Error>`. This means that the function returns
+/// a result that can either be Ok(()) if the execution was successful, or an error
+/// of type `duckdb::Error` if something went wrong.
 fn create_indices(connection: &PooledConnection<DuckdbConnectionManager>) -> duckdb::Result<()> {
     // We are interested only in creating an index for the id column in the vertices table, as we
     // will only query over it. The rest of the data that is stored just extends the knowledge that
@@ -60,6 +89,23 @@ fn create_indices(connection: &PooledConnection<DuckdbConnectionManager>) -> duc
     Ok(())
 }
 
+/// The function stores an entity and its associated properties in a database.
+///
+/// Arguments:
+///
+/// * `connection`: A connection to a DuckDB database, which is used to execute SQL
+/// queries.
+///
+/// * `entity`: The `entity` parameter is an instance of the `Entity` struct, which
+/// represents a Wikidata entity (such as an item, property, or lexeme) and contains
+/// information about its labels, descriptions, and claims. The function
+/// `store_entity` takes this entity and stores its information in a DuckDB database.
+///
+/// Returns:
+///
+/// The function `store_entity` returns a `Result` with an empty tuple `()` as the
+/// success value or an `Error` if an error occurs during the execution of the
+/// function.
 fn store_entity(
     connection: &PooledConnection<DuckdbConnectionManager>,
     entity: Entity,
@@ -93,6 +139,27 @@ fn store_entity(
     Ok(())
 }
 
+/// The function parses a JSON string, transforms it into a Wikidata entity, and
+/// stores it in a database.
+///
+/// Arguments:
+///
+/// * `connection`: A reference to a connection to a database, specifically a DuckDB
+/// database, wrapped in a `Result` type that can either contain the connection or
+/// an error if the connection could not be established.
+///
+/// * `line`: A string representing a single line of a Wikidata dump file, which
+/// contains a JSON object representing a Wikidata entity.
+///
+/// * `line_number`: The line number parameter represents the line number of the
+/// current line being processed in a file. It is used for error reporting purposes,
+/// to help identify which line caused an error if one occurs during the processing
+/// of the file.
+///
+/// Returns:
+///
+/// a `Result` with an empty tuple `()` as the success value and a `String` as the
+/// error value.
 fn insert_entity(
     connection: &Result<PooledConnection<DuckdbConnectionManager>, r2d2::Error>,
     mut line: String,
@@ -157,6 +224,18 @@ fn insert_entity(
     Ok(())
 }
 
+/// The function prints the progress of entity processing with the current line
+/// number and elapsed time.
+///
+/// Arguments:
+///
+/// * `line_number`: An integer representing the current line number or the number
+/// of entities processed so far.
+///
+/// * `start_time`: `start_time` is a variable of type `Instant` which represents
+/// the point in time when a certain process started. It is used in the
+/// `print_progress` function to calculate the elapsed time since the process
+/// started.
 fn print_progress(line_number: i32, start_time: Instant) {
     print!(
         "\x1B[2K\r{} entities processed in {}.",
@@ -166,6 +245,14 @@ fn print_progress(line_number: i32, start_time: Instant) {
     let _ = stdout().flush();
 }
 
+/// This function reads a JSON file, creates a new DuckDB database, and inserts the
+/// data from the JSON file into the database in parallel.
+///
+/// Returns:
+///
+/// a `Result` type with the `Ok` variant containing an empty tuple `()` and the
+/// `Err` variant containing a `String` with an error message if any error occurs
+/// during the execution of the function.
 fn main() -> Result<(), String> {
     let args: Args = Args::parse();
 

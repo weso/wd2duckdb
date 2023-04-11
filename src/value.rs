@@ -8,6 +8,13 @@ use wikidata::ClaimValueData;
 use crate::id::{f_id, l_id, p_id, q_id, s_id};
 use crate::LANG;
 
+/// The `Table` enum defines the different types of data that can be stored in the
+/// DuckDB database for a Wikidata item. Each variant of the enum corresponds to a
+/// different type of data, such as an `Entity`, a `String`, `Coordinate`, a `Quantity`,
+/// or a `Tune`. The `Unknown` variant is used for data types that are not recognized,
+/// and the `None` variant is used for cases where no data is present. The enum also
+/// provides methods for creating tables and indices in the database, as well as
+/// inserting data into the tables.
 pub enum Table {
     Entity(u64),
     String(String),
@@ -32,6 +39,14 @@ pub enum Table {
 }
 
 impl Table {
+    /// The function returns an iterator over a static array of seven different types of
+    /// tables.
+    ///
+    /// Returns:
+    ///
+    /// The function `iterator` returns an iterator over a static array of `Table`
+    /// values. The `lazy_static` macro is used to create a static reference to the
+    /// array, which is then iterated over and returned by the function.
     pub fn iterator() -> Iter<'static, Table> {
         lazy_static! {
             static ref TABLES: [Table; 7] = [
@@ -60,16 +75,37 @@ impl Table {
         TABLES.iter()
     }
 
+    /// Returns the table name and column definitions for the given entity type as a tuple.
+    ///
+    /// According to the so-called database structure we are going to describe in here, all the
+    /// edges will have the following 3 columns: src_id, property_id and dst_id. Not only that,
+    /// but implementing inheritance in a relational database can be done through several
+    /// alternatives. What we have chosen so far is 'Table-Per-Concrete', where each entity will
+    /// have its corresponding fully formed table with no references to any of the other sub-types.
+    /// Note that all of those will have the same 3 columns: src_id, property_id and dst_id.
+    /// However, due to the fact that some datum can possibly reference a yet not parsed value,
+    /// we cannot use primary keys. Hence, indices will be created for easier accessing :D
+    ///
+    /// Returns:
+    ///
+    /// A tuple containing the name of the table as a `&str` and a vector of column definitions
+    /// as tuples, where each tuple contains the column name as a `&str` and the column type as a `&str`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let table = Table::String("Hello world".to_string());
+    /// let (table_name, columns) = table.table_definition();
+    /// println!("Table name: {}", table_name);
+    /// println!("Columns: {:?}", columns);
+    /// ```
+    ///
+    /// Output:
+    /// ```
+    /// Table name: string
+    /// Columns: [("src_id", "INTEGER NOT NULL"), ("property_id", "INTEGER NOT NULL"), ("dst_id", "INTEGER NOT NULL"), ("string", "TEXT NOT NULL")]
+    /// ```
     fn table_definition(&self) -> (&str, Vec<(&str, &str)>) {
-        // According to the so-called database structure we are going to describe in here, all the
-        // edges will have the following 3 columns: src_id, property_id and dst_id. Not only that,
-        // but implementing inheritance in a relational database can be done through several
-        // alternatives. What we have chosen so far is 'Table-Per-Concrete', where each entity will
-        // have its corresponding fully formed table with no references to any of the other sub-types.
-        // Note that all of those will have the same 3 columns: src_id, property_id and dst_id.
-        // However, due to the fact that some datum can possibly reference a yet not parsed value,
-        // we cannot use primary keys. Hence, indices will be created for easier accessing :D
-
         let mut columns = vec![
             ("src_id", "INTEGER NOT NULL"),
             ("property_id", "INTEGER NOT NULL"),
@@ -121,6 +157,21 @@ impl Table {
         (table_name, columns)
     }
 
+    /// This function creates a table in a DuckDB database with the specified table name
+    /// and columns.
+    ///
+    /// Arguments:
+    ///
+    /// * `connection`: `connection` is a reference to a `PooledConnection` object from
+    /// the `DuckdbConnectionManager` type. It is used to establish a connection to a
+    /// DuckDB database and execute SQL queries on it.
+    ///
+    /// Returns:
+    ///
+    /// The `create_table` function is returning a `duckdb::Result<()>`, which is a type
+    /// alias for `Result<(), duckdb::Error>`. This means that the function returns a
+    /// `Result` object that either contains a `()` value (i.e. nothing) if the table
+    /// creation was successful, or a `duckdb::Error` object if an error occurred.
     pub fn create_table(
         &self,
         connection: &PooledConnection<DuckdbConnectionManager>,
@@ -137,6 +188,20 @@ impl Table {
         ))
     }
 
+    /// The function creates indices for specific columns in a table using a connection
+    /// to a DuckDB database.
+    ///
+    /// Arguments:
+    ///
+    /// * `connection`: The `connection` parameter is a reference to a
+    /// `PooledConnection` object from the `DuckdbConnectionManager` type. It is used to
+    /// execute SQL queries on a DuckDB database.
+    ///
+    /// Returns:
+    ///
+    /// a `duckdb::Result<()>`, which is a result type indicating success or failure of
+    /// the operation. The `()` inside the `Result` indicates that the function returns
+    /// no meaningful value on success, but may return an error if the operation fails.
     pub fn create_indices(
         &self,
         connection: &PooledConnection<DuckdbConnectionManager>,
@@ -160,6 +225,23 @@ impl Table {
         Ok(())
     }
 
+    /// This function inserts data into a specified table using a prepared SQL
+    /// statement.
+    ///
+    /// Arguments:
+    ///
+    /// * `connection`: A reference to a pooled connection to a DuckDB database.
+    ///
+    /// * `params`: `params` is a parameter of the `insert` function that takes an
+    /// implementation of the `Params` trait. This trait is used to specify the values
+    /// to be inserted into the database table.
+    ///
+    /// Returns:
+    ///
+    /// The `insert` function returns a `duckdb::Result<()>`, which is an alias for
+    /// `Result<(), duckdb::Error>`. This means that the function returns a result that
+    /// can either be Ok(()) if the operation was successful, or an error of type
+    /// `duckdb::Error` if something went wrong.
     fn insert(
         &self,
         connection: &PooledConnection<DuckdbConnectionManager>,
@@ -186,6 +268,23 @@ impl Table {
         Ok(())
     }
 
+    /// This function stores data in a DuckDB database based on the type of data
+    /// provided.
+    ///
+    /// Arguments:
+    ///
+    /// * `connection`: A connection to a DuckDB database, obtained from a connection
+    /// pool.
+    ///
+    /// * `src_id`: The ID of the source entity in the knowledge graph.
+    ///
+    /// * `property_id`: The ID of the property being stored in the database.
+    ///
+    /// Returns:
+    ///
+    /// a `duckdb::Result<()>`, which is a result type indicating success or failure of
+    /// the database operation. The `()` indicates that the function does not return any
+    /// meaningful value on success.
     pub fn store(
         &self,
         connection: &PooledConnection<DuckdbConnectionManager>,
