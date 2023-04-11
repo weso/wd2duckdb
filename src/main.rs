@@ -3,14 +3,14 @@
 mod id;
 mod value;
 
-use std::fs::File;
 use clap::Parser;
 use duckdb::{params, DuckdbConnectionManager, Error};
 use humantime::format_duration;
 use lazy_static::lazy_static;
 use r2d2::{Pool, PooledConnection};
 use rayon::prelude::*;
-use std::io::{BufRead, BufReader, stdout, Write};
+use std::fs::File;
+use std::io::{stdout, BufRead, BufReader, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use wikidata::{Entity, Lang, Rank};
@@ -51,7 +51,7 @@ fn create_indices(connection: &PooledConnection<DuckdbConnectionManager>) -> duc
     // We are interested only in creating an index for the id column in the vertices table, as we
     // will only query over it. The rest of the data that is stored just extends the knowledge that
     // we store, but has no relevance in regards with future processing :D
-    connection.execute_batch("CREATE INDEX vertex_id_index ON vertex (id);",)?;
+    connection.execute_batch("CREATE INDEX vertex_id_index ON vertex (id);")?;
 
     for table in Table::iterator() {
         table.create_indices(connection)?;
@@ -60,7 +60,10 @@ fn create_indices(connection: &PooledConnection<DuckdbConnectionManager>) -> duc
     Ok(())
 }
 
-fn store_entity(connection: &PooledConnection<DuckdbConnectionManager>, entity: Entity) -> Result<(), Error> {
+fn store_entity(
+    connection: &PooledConnection<DuckdbConnectionManager>,
+    entity: Entity,
+) -> Result<(), Error> {
     use wikidata::WikiId::*;
 
     let src_id = match entity.id {
@@ -74,7 +77,7 @@ fn store_entity(connection: &PooledConnection<DuckdbConnectionManager>, entity: 
         .prepare_cached("INSERT INTO vertex (id, label, description) VALUES (?1, ?2, ?3)")?
         .execute(params![
             // Allows the use of heterogeneous data as parameters to the prepared statement
-            src_id,                             // identifier of the entity
+            src_id,                         // identifier of the entity
             entity.labels.get(&LANG),       // label of the entity for a certain language
             entity.descriptions.get(&LANG), // description of the entity for a certain language
         ])?;
@@ -93,7 +96,7 @@ fn store_entity(connection: &PooledConnection<DuckdbConnectionManager>, entity: 
 fn insert_entity(
     connection: &Result<PooledConnection<DuckdbConnectionManager>, r2d2::Error>,
     mut line: String,
-    line_number: i32
+    line_number: i32,
 ) -> Result<(), String> {
     // We try to open a connection. This should be done as we are in the context of a multi-threaded
     // program. Thus, for us to avoid races, a new connection from the pool has to be retrieved :D
@@ -124,24 +127,37 @@ fn insert_entity(
     // per line in the document, we can use this algorithm for retrieving each entity in the dump
     let value = match unsafe { simd_json::from_str(&mut line) } {
         Ok(value) => value,
-        Err(error) => return Err(format!("Error parsing JSON at line {}: {}", line_number, error))
+        Err(error) => {
+            return Err(format!(
+                "Error parsing JSON at line {}: {}",
+                line_number, error
+            ))
+        }
     };
 
     // Once we have the JSON value parsed, we try to transform it into a Wikidata entity, that will
     // be stored later. This is basically the same object as before, but arranged in a better manner
     let entity = match Entity::from_json(value) {
         Ok(entity) => entity,
-        Err(error) => return Err(format!("Error parsing Entity at line {}: {:?}", line_number, error))
+        Err(error) => {
+            return Err(format!(
+                "Error parsing Entity at line {}: {:?}",
+                line_number, error
+            ))
+        }
     };
 
     if let Err(error) = store_entity(conn, entity) {
-        return Err(format!("Error storing entity at line {}: {}", line_number, error));
+        return Err(format!(
+            "Error storing entity at line {}: {}",
+            line_number, error
+        ));
     }
 
     Ok(())
 }
 
-fn print_progress(line_number: i32, start_time: Instant) -> () {
+fn print_progress(line_number: i32, start_time: Instant) {
     print!(
         "\x1B[2K\r{} entities processed in {}.",
         line_number,
@@ -174,9 +190,14 @@ fn main() -> Result<(), String> {
     // saved in the path specified by the user. Some IOErrors may occurs and should be handled
     let manager = match DuckdbConnectionManager::file(database_path) {
         Ok(manager) => manager,
-        Err(error) => return Err(format!("Error creating the DuckDB connection manager. {}", error)),
+        Err(error) => {
+            return Err(format!(
+                "Error creating the DuckDB connection manager. {}",
+                error
+            ))
+        }
     };
-    let pool =  match Pool::new(manager) {
+    let pool = match Pool::new(manager) {
         Ok(pool) => pool,
         Err(error) => return Err(format!("Error creating the connection pool. {}", error)),
     };
@@ -200,13 +221,14 @@ fn main() -> Result<(), String> {
     reader
         .lines() // we retrieve the iterator over the lines in the JSON file
         .par_bridge() // we create a bridge for parallel execution
-        .for_each( // for each line in the parallel iterator ...
+        .for_each(
+            // for each line in the parallel iterator ...
             |line|
                 // try to insert the entity in the database and handle errors appropriately
                 if let Err(error) =  insert_entity( & pool.get(), line.unwrap(), 0) {
                     // do not halt execution in case an error happens, just warn the user :D
                     eprintln!("Error inserting entity. {}", error);
-                }
+                },
         );
 
     if let Err(error) = create_indices(&connection) {

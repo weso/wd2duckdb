@@ -1,8 +1,8 @@
 use chrono::{DateTime, Utc};
-use duckdb::{DuckdbConnectionManager, params, Params};
+use duckdb::{params, DuckdbConnectionManager, Params};
 use lazy_static::lazy_static;
-use std::slice::Iter;
 use r2d2::PooledConnection;
+use std::slice::Iter;
 use wikidata::ClaimValueData;
 
 use crate::id::{f_id, l_id, p_id, q_id, s_id};
@@ -28,7 +28,7 @@ pub enum Table {
         precision: u8,
     },
     Unknown,
-    None
+    None,
 }
 
 impl Table {
@@ -73,7 +73,7 @@ impl Table {
         let mut columns = vec![
             ("src_id", "INTEGER NOT NULL"),
             ("property_id", "INTEGER NOT NULL"),
-            ("dst_id", "INTEGER NOT NULL")
+            ("dst_id", "INTEGER NOT NULL"),
         ];
 
         // For the sake of simplicity, those entities that annotate no additional value; that is,
@@ -121,7 +121,10 @@ impl Table {
         (table_name, columns)
     }
 
-    pub fn create_table(&self, connection: &PooledConnection<DuckdbConnectionManager>) -> duckdb::Result<()> {
+    pub fn create_table(
+        &self,
+        connection: &PooledConnection<DuckdbConnectionManager>,
+    ) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
         connection.execute_batch(&format!(
             "CREATE TABLE IF NOT EXISTS {} ({});",
@@ -134,7 +137,10 @@ impl Table {
         ))
     }
 
-    pub fn create_indices(&self, connection: &PooledConnection<DuckdbConnectionManager>) -> duckdb::Result<()> {
+    pub fn create_indices(
+        &self,
+        connection: &PooledConnection<DuckdbConnectionManager>,
+    ) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
         for (column_name, _) in columns {
@@ -146,10 +152,7 @@ impl Table {
             if column_name == "src_id" || column_name == "dst_id" {
                 connection.execute_batch(&format!(
                     "CREATE INDEX IF NOT EXISTS {}_{}_index ON {} ({});",
-                    table_name,
-                    column_name,
-                    table_name,
-                    column_name,
+                    table_name, column_name, table_name, column_name,
                 ))?;
             }
         }
@@ -157,7 +160,11 @@ impl Table {
         Ok(())
     }
 
-    fn insert(&self, connection: &PooledConnection<DuckdbConnectionManager>, params: impl Params) -> duckdb::Result<()> {
+    fn insert(
+        &self,
+        connection: &PooledConnection<DuckdbConnectionManager>,
+        params: impl Params,
+    ) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
         connection
@@ -196,22 +203,12 @@ impl Table {
         // description of the data model we are creating with this tool.
 
         match self {
-            Table::Entity(dst_id) => self.insert(
-                connection,
-                params![src_id, property_id, dst_id]
-            ),
-            Table::None => self.insert(
-                connection,
-                params![src_id, property_id, src_id]
-            ),
-            Table::Unknown => self.insert(
-                connection,
-                params![src_id, property_id, src_id]
-            ),
-            Table::String(string) => self.insert(
-                connection,
-                params![src_id, property_id, src_id, string]
-            ),
+            Table::Entity(dst_id) => self.insert(connection, params![src_id, property_id, dst_id]),
+            Table::None => self.insert(connection, params![src_id, property_id, src_id]),
+            Table::Unknown => self.insert(connection, params![src_id, property_id, src_id]),
+            Table::String(string) => {
+                self.insert(connection, params![src_id, property_id, src_id, string])
+            }
             Table::Coordinates {
                 latitude,
                 longitude,
@@ -219,7 +216,15 @@ impl Table {
                 globe_id,
             } => self.insert(
                 connection,
-                params![src_id, property_id, src_id, latitude, longitude, precision, globe_id],
+                params![
+                    src_id,
+                    property_id,
+                    src_id,
+                    latitude,
+                    longitude,
+                    precision,
+                    globe_id
+                ],
             ),
             Table::Quantity {
                 amount,
@@ -228,15 +233,20 @@ impl Table {
                 unit_id,
             } => self.insert(
                 connection,
-                params![src_id, property_id, src_id, amount, lower_bound, upper_bound, unit_id],
+                params![
+                    src_id,
+                    property_id,
+                    src_id,
+                    amount,
+                    lower_bound,
+                    upper_bound,
+                    unit_id
+                ],
             ),
-            Table::Time {
-                time,
-                precision
-            } => self.insert(
+            Table::Time { time, precision } => self.insert(
                 connection,
-                params![src_id, property_id, src_id, time, precision]
-            )
+                params![src_id, property_id, src_id, time, precision],
+            ),
         }
     }
 }
