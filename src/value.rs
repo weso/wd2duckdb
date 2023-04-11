@@ -79,7 +79,7 @@ impl Table {
         // For the sake of simplicity, those entities that annotate no additional value; that is,
         // Entity, None and Unknown, will be all of those stored in the same table called Edge. Thus,
         // we are avoiding the creation of 3 tables with the exact same structure as a whole. More
-        // in more, notice that the dst_id of all the relationships but for Entity, will be the
+        // in more, notice that the dst_id of all the relationships, but for Entity, will be the
         // src_id, as we are annotating additional information to the node itself :D
 
         let (table_name, mut value_columns) = match self {
@@ -112,7 +112,7 @@ impl Table {
             _ => ("edge", vec![]), // For Entity, Unknown and None we create only one table...
         };
 
-        // Lastly, we have to extend the primary keys with the rest of the body of the entities.
+        // Lastly, we have to extend the common columns with the rest of the body of the entities.
         // In this manner, we can create as many tables as we wish, all of them following the
         // previously described inheritance policy :D
 
@@ -139,8 +139,10 @@ impl Table {
 
         for (column_name, _) in columns {
             // We are interested in creating indices only for two columns: src_id and dst_id. Hence,
-            // we check if the column_name is any of those. In some previous version loads of clutter
-            // was created by creating indices for all the columns :(
+            // we check if the column_name is any of those. In the previous version loads of clutter
+            // was created by creating indices for all the columns. Notice that we are not interested
+            // in querying over columns that just annotate the node with additional information, such
+            // as the description, or the label in a certain language :(
             if column_name == "src_id" || column_name == "dst_id" {
                 connection.execute_batch(&format!(
                     "CREATE INDEX IF NOT EXISTS {}_{}_index ON {} ({});",
@@ -191,7 +193,7 @@ impl Table {
         // which model those extensions to the data model. This may be expanded in the future ;D
         //
         // ACK: See https://github.com/angelip2303/wd2duckdb#database-structure for a more detailed
-        // description of the data model we are creating with this tool
+        // description of the data model we are creating with this tool.
 
         match self {
             Table::Entity(dst_id) => self.insert(
