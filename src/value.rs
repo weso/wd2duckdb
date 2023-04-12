@@ -1,18 +1,23 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2022  Philipp Emanuel Weidmann <pew@worldwidemann.com>
-
 use chrono::{DateTime, Utc};
-use duckdb::{params, Params, Transaction};
+use duckdb::{params, DuckdbConnectionManager, Params};
 use lazy_static::lazy_static;
+use r2d2::PooledConnection;
 use std::slice::Iter;
 use wikidata::ClaimValueData;
 
 use crate::id::{f_id, l_id, p_id, q_id, s_id};
 use crate::LANG;
 
+/// The `Table` enum defines the different types of data that can be stored in the
+/// DuckDB database for a Wikidata item. Each variant of the enum corresponds to a
+/// different type of data, such as an `Entity`, a `String`, `Coordinate`, a `Quantity`,
+/// or a `Tune`. The `Unknown` variant is used for data types that are not recognized,
+/// and the `None` variant is used for cases where no data is present. The enum also
+/// provides methods for creating tables and indices in the database, as well as
+/// inserting data into the tables.
 pub enum Table {
-    String(String),
     Entity(u64),
+    String(String),
     Coordinates {
         latitude: f64,
         longitude: f64,
@@ -29,11 +34,19 @@ pub enum Table {
         time: DateTime<Utc>,
         precision: u8,
     },
-    None,
     Unknown,
+    None,
 }
 
 impl Table {
+    /// The function returns an iterator over a static array of seven different types of
+    /// tables.
+    ///
+    /// Returns:
+    ///
+    /// The function `iterator` returns an iterator over a static array of `Table`
+    /// values. The `lazy_static` macro is used to create a static reference to the
+    /// array, which is then iterated over and returned by the function.
     pub fn iterator() -> Iter<'static, Table> {
         lazy_static! {
             static ref TABLES: [Table; 7] = [
@@ -56,25 +69,59 @@ impl Table {
                     precision: 0,
                 },
                 Table::None,
-                Table::Unknown,
+                Table::Unknown
             ];
         }
         TABLES.iter()
     }
 
+    /// Returns the table name and column definitions for the given entity type as a tuple.
+    ///
+    /// According to the so-called database structure we are going to describe in here, all the
+    /// edges will have the following 3 columns: src_id, property_id and dst_id. Not only that,
+    /// but implementing inheritance in a relational database can be done through several
+    /// alternatives. What we have chosen so far is 'Table-Per-Concrete', where each entity will
+    /// have its corresponding fully formed table with no references to any of the other sub-types.
+    /// Note that all of those will have the same 3 columns: src_id, property_id and dst_id.
+    /// However, due to the fact that some datum can possibly reference a yet not parsed value,
+    /// we cannot use primary keys. Hence, indices will be created for easier accessing :D
+    ///
+    /// Returns:
+    ///
+    /// A tuple containing the name of the table as a `&str` and a vector of column definitions
+    /// as tuples, where each tuple contains the column name as a `&str` and the column type as a `&str`.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// let table = Table::String("Hello world".to_string());
+    /// let (table_name, columns) = table.table_definition();
+    /// println!("Table name: {}", table_name);
+    /// println!("Columns: {:?}", columns);
+    /// ```
+    ///
+    /// Output:
+    /// ```
+    /// Table name: string
+    /// Columns: [("src_id", "INTEGER NOT NULL"), ("property_id", "INTEGER NOT NULL"), ("dst_id", "INTEGER NOT NULL"), ("string", "TEXT NOT NULL")]
+    /// ```
     fn table_definition(&self) -> (&str, Vec<(&str, &str)>) {
-        use Table::*;
-
         let mut columns = vec![
-            ("id", "INTEGER NOT NULL"),
+            ("src_id", "INTEGER NOT NULL"),
             ("property_id", "INTEGER NOT NULL"),
+            ("dst_id", "INTEGER NOT NULL"),
         ];
 
+        // For the sake of simplicity, those entities that annotate no additional value; that is,
+        // Entity, None and Unknown, will be all of those stored in the same table called Edge. Thus,
+        // we are avoiding the creation of 3 tables with the exact same structure as a whole. More
+        // in more, notice that the dst_id of all the relationships, but for Entity, will be the
+        // src_id, as we are annotating additional information to the node itself :D
+
         let (table_name, mut value_columns) = match self {
-            String(_) => ("string", vec![("string", "TEXT NOT NULL")]),
-            Entity(_) => ("entity", vec![("entity_id", "INTEGER NOT NULL")]),
-            Coordinates { .. } => (
-                "coordinates",
+            Table::String(_) => ("string", vec![("string", "TEXT NOT NULL")]),
+            Table::Coordinates { .. } => (
+                "coordinate",
                 vec![
                     ("latitude", "REAL NOT NULL"),
                     ("longitude", "REAL NOT NULL"),
@@ -82,7 +129,7 @@ impl Table {
                     ("globe_id", "INTEGER NOT NULL"),
                 ],
             ),
-            Quantity { .. } => (
+            Table::Quantity { .. } => (
                 "quantity",
                 vec![
                     ("amount", "REAL NOT NULL"),
@@ -91,27 +138,47 @@ impl Table {
                     ("unit_id", "INTEGER"),
                 ],
             ),
-            Time { .. } => (
+            Table::Time { .. } => (
                 "time",
                 vec![
                     ("time", "DATETIME NOT NULL"),
                     ("precision", "INTEGER NOT NULL"),
                 ],
             ),
-            None => ("none", vec![]),
-            Unknown => ("unknown", vec![]),
+            _ => ("edge", vec![]), // For Entity, Unknown and None we create only one table...
         };
+
+        // Lastly, we have to extend the common columns with the rest of the body of the entities.
+        // In this manner, we can create as many tables as we wish, all of them following the
+        // previously described inheritance policy :D
 
         columns.append(&mut value_columns);
 
         (table_name, columns)
     }
 
-    pub fn create_table(&self, transaction: &Transaction) -> duckdb::Result<()> {
+    /// This function creates a table in a DuckDB database with the specified table name
+    /// and columns.
+    ///
+    /// Arguments:
+    ///
+    /// * `connection`: `connection` is a reference to a `PooledConnection` object from
+    /// the `DuckdbConnectionManager` type. It is used to establish a connection to a
+    /// DuckDB database and execute SQL queries on it.
+    ///
+    /// Returns:
+    ///
+    /// The `create_table` function is returning a `duckdb::Result<()>`, which is a type
+    /// alias for `Result<(), duckdb::Error>`. This means that the function returns a
+    /// `Result` object that either contains a `()` value (i.e. nothing) if the table
+    /// creation was successful, or a `duckdb::Error` object if an error occurred.
+    pub fn create_table(
+        &self,
+        connection: &PooledConnection<DuckdbConnectionManager>,
+    ) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
-
-        transaction.execute_batch(&format!(
-            "CREATE TABLE {} ({});",
+        connection.execute_batch(&format!(
+            "CREATE TABLE IF NOT EXISTS {} ({});",
             table_name,
             columns
                 .iter()
@@ -121,23 +188,68 @@ impl Table {
         ))
     }
 
-    pub fn create_indices(&self, transaction: &Transaction) -> duckdb::Result<()> {
+    /// The function creates indices for specific columns in a table using a connection
+    /// to a DuckDB database.
+    ///
+    /// Arguments:
+    ///
+    /// * `connection`: The `connection` parameter is a reference to a
+    /// `PooledConnection` object from the `DuckdbConnectionManager` type. It is used to
+    /// execute SQL queries on a DuckDB database.
+    ///
+    /// Returns:
+    ///
+    /// a `duckdb::Result<()>`, which is a result type indicating success or failure of
+    /// the operation. The `()` inside the `Result` indicates that the function returns
+    /// no meaningful value on success, but may return an error if the operation fails.
+    pub fn create_indices(
+        &self,
+        connection: &PooledConnection<DuckdbConnectionManager>,
+    ) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
         for (column_name, _) in columns {
-            transaction.execute_batch(&format!(
-                "CREATE INDEX {}_{}_index ON {} ({});",
-                table_name, column_name, table_name, column_name,
-            ))?;
+            // We are interested in creating indices only for two columns: src_id and dst_id. Hence,
+            // we check if the column_name is any of those. In the previous version loads of clutter
+            // was created by creating indices for all the columns. Notice that we are not interested
+            // in querying over columns that just annotate the node with additional information, such
+            // as the description, or the label in a certain language :(
+            if column_name == "src_id" || column_name == "dst_id" {
+                connection.execute_batch(&format!(
+                    "CREATE INDEX IF NOT EXISTS {}_{}_index ON {} ({});",
+                    table_name, column_name, table_name, column_name,
+                ))?;
+            }
         }
 
         Ok(())
     }
 
-    fn insert(&self, transaction: &Transaction, params: impl Params) -> duckdb::Result<()> {
+    /// This function inserts data into a specified table using a prepared SQL
+    /// statement.
+    ///
+    /// Arguments:
+    ///
+    /// * `connection`: A reference to a pooled connection to a DuckDB database.
+    ///
+    /// * `params`: `params` is a parameter of the `insert` function that takes an
+    /// implementation of the `Params` trait. This trait is used to specify the values
+    /// to be inserted into the database table.
+    ///
+    /// Returns:
+    ///
+    /// The `insert` function returns a `duckdb::Result<()>`, which is an alias for
+    /// `Result<(), duckdb::Error>`. This means that the function returns a result that
+    /// can either be Ok(()) if the operation was successful, or an error of type
+    /// `duckdb::Error` if something went wrong.
+    fn insert(
+        &self,
+        connection: &PooledConnection<DuckdbConnectionManager>,
+        params: impl Params,
+    ) -> duckdb::Result<()> {
         let (table_name, columns) = self.table_definition();
 
-        transaction
+        connection
             .prepare_cached(&format!(
                 "INSERT INTO {} ({}) VALUES ({})",
                 table_name,
@@ -156,40 +268,84 @@ impl Table {
         Ok(())
     }
 
+    /// This function stores data in a DuckDB database based on the type of data
+    /// provided.
+    ///
+    /// Arguments:
+    ///
+    /// * `connection`: A connection to a DuckDB database, obtained from a connection
+    /// pool.
+    ///
+    /// * `src_id`: The ID of the source entity in the knowledge graph.
+    ///
+    /// * `property_id`: The ID of the property being stored in the database.
+    ///
+    /// Returns:
+    ///
+    /// a `duckdb::Result<()>`, which is a result type indicating success or failure of
+    /// the database operation. The `()` indicates that the function does not return any
+    /// meaningful value on success.
     pub fn store(
         &self,
-        transaction: &Transaction,
-        id: u64,
+        connection: &PooledConnection<DuckdbConnectionManager>,
+        src_id: u64,
         property_id: u64,
     ) -> duckdb::Result<()> {
-        use Table::*;
+        // Note the schema of the Database we are working with. In this regard, we have two main
+        // entities which include Vertex and Edge; those act as the two pieces that together form
+        // a Knowledge Graph out of the JSON dump we are willing to process. Apart from that, we
+        // need to store data types that are more complex; that is, qualifiers may annotate the
+        // relationships and we want to preserve that kind of information. Thus, some entities arise
+        // which model those extensions to the data model. This may be expanded in the future ;D
+        //
+        // ACK: See https://github.com/angelip2303/wd2duckdb#database-structure for a more detailed
+        // description of the data model we are creating with this tool.
 
         match self {
-            String(string) => self.insert(transaction, params![id, property_id, string]),
-            Entity(entity_id) => self.insert(transaction, params![id, property_id, entity_id]),
-            Coordinates {
+            Table::Entity(dst_id) => self.insert(connection, params![src_id, property_id, dst_id]),
+            Table::None => self.insert(connection, params![src_id, property_id, src_id]),
+            Table::Unknown => self.insert(connection, params![src_id, property_id, src_id]),
+            Table::String(string) => {
+                self.insert(connection, params![src_id, property_id, src_id, string])
+            }
+            Table::Coordinates {
                 latitude,
                 longitude,
                 precision,
                 globe_id,
             } => self.insert(
-                transaction,
-                params![id, property_id, latitude, longitude, precision, globe_id],
+                connection,
+                params![
+                    src_id,
+                    property_id,
+                    src_id,
+                    latitude,
+                    longitude,
+                    precision,
+                    globe_id
+                ],
             ),
-            Quantity {
+            Table::Quantity {
                 amount,
                 lower_bound,
                 upper_bound,
                 unit_id,
             } => self.insert(
-                transaction,
-                params![id, property_id, amount, lower_bound, upper_bound, unit_id],
+                connection,
+                params![
+                    src_id,
+                    property_id,
+                    src_id,
+                    amount,
+                    lower_bound,
+                    upper_bound,
+                    unit_id
+                ],
             ),
-            Time { time, precision } => {
-                self.insert(transaction, params![id, property_id, time, precision])
-            }
-            None => self.insert(transaction, params![id, property_id]),
-            Unknown => self.insert(transaction, params![id, property_id]),
+            Table::Time { time, precision } => self.insert(
+                connection,
+                params![src_id, property_id, src_id, time, precision],
+            ),
         }
     }
 }
