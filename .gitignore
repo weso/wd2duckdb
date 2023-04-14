@@ -6,6 +6,5 @@
 **/*.rs.bk
 
 .idea
-.cargo
 *.json
 *.duckdb
