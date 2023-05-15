@@ -109,7 +109,7 @@ fn create_indices(connection: &PooledConnection<DuckdbConnectionManager>) -> duc
 fn store_entity(
     connection: &PooledConnection<DuckdbConnectionManager>,
     entity: Entity,
-) -> Result<(), Error> {
+) -> Result<(), String> {
     use wikidata::WikiId::*;
 
     let src_id = match entity.id {
@@ -118,21 +118,32 @@ fn store_entity(
         LexemeId(id) => l_id(id),
     };
 
-    // TODO: fix this two into one? :(
-    connection
-        .prepare_cached("INSERT INTO vertex (id, label, description) VALUES (?1, ?2, ?3)")?
-        .execute(params![
-            // Allows the use of heterogeneous data as parameters to the prepared statement
-            src_id,                         // identifier of the entity
-            entity.labels.get(&LANG),       // label of the entity for a certain language
-            entity.descriptions.get(&LANG), // description of the entity for a certain language
-        ])?;
+    // TODO: try to check for the error here ExpectedString
+    let mut insert_into = match connection
+        .prepare_cached("INSERT INTO vertex (id, label, description) VALUES (?1, ?2, ?3)")
+    {
+        Ok(insert_into) => insert_into,
+        Err(error) => return Err(format!("Error preparing statement: {:?}", error)),
+    };
+
+    if let Err(error) = insert_into.execute(params![
+        // Allows the use of heterogeneous data as parameters to the prepared statement
+        src_id,                         // identifier of the entity
+        entity.labels.get(&LANG),       // label of the entity for a certain language
+        entity.descriptions.get(&LANG), // description of the entity for a certain language
+    ]) {
+        return Err(format!("Error inserting into TABLE VERTEX: {:?}", error));
+    };
 
     for (property_id, claim_value) in entity.claims {
         // In case the claim value stores some outdated or wrong information, we ignore it. The
         // deprecated annotation indicates that this piece of information should be ignored
         if claim_value.rank != Rank::Deprecated {
-            Table::from(claim_value.data).store(connection, src_id, p_id(property_id))?;
+            if let Err(error) =
+                Table::from(claim_value.data).store(connection, src_id, p_id(property_id))
+            {
+                return Err(format!("Error inserting into TABLE: {:?}", error));
+            }
         }
     }
 
@@ -163,7 +174,7 @@ fn store_entity(
 fn insert_entity(
     connection: &Result<PooledConnection<DuckdbConnectionManager>, r2d2::Error>,
     mut line: String,
-    line_number: i32,
+    line_number: u32,
 ) -> Result<(), String> {
     // We try to open a connection. This should be done as we are in the context of a multi-threaded
     // program. Thus, for us to avoid races, a new connection from the pool has to be retrieved :D
@@ -204,6 +215,7 @@ fn insert_entity(
 
     // Once we have the JSON value parsed, we try to transform it into a Wikidata entity, that will
     // be stored later. This is basically the same object as before, but arranged in a better manner
+    println!("{}: {:?}", line_number, value);
     let entity = match Entity::from_json(value) {
         Ok(entity) => entity,
         Err(error) => {
@@ -312,13 +324,14 @@ fn main() -> Result<(), String> {
     }
 
     reader
-        .lines() // we retrieve the iterator over the lines in the JSON file
-        .par_bridge() // we create a bridge for parallel execution
+        .lines() // we retrieve the iterator over the lines in the
+        .enumerate() // we enumerate the iterator so we can know the line number
+        .par_bridge() // we parallelize the iterator
         .for_each(
             // for each line in the parallel iterator ...
-            |line|
+            |(line_number, line)|
                 // try to insert the entity in the database and handle errors appropriately
-                if let Err(error) =  insert_entity( & pool.get(), line.unwrap(), 0) {
+                if let Err(error) =  insert_entity(& pool.get(), line.unwrap(), line_number as u32) {
                     // do not halt execution in case an error happens, just warn the user :D
                     eprintln!("Error inserting entity. {}", error);
                 },

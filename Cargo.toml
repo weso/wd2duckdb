@@ -1,12 +1,14 @@
 [package]
 name = "wd2duckdb"
-version = "0.1.0"
+version = "0.0.1"
 authors = [ "Ángel Iglesias Préstamo <angel.iglesias.prestamo@gmail.com>" ]
 description = "Transform a Wikidata JSON dump into an DuckDB database"
 repository = "https://github.com/angelip2303/wd2duckdb"
 readme = "README.md"
 license = "GPL-3.0-or-later"
 edition = "2021"
+keywords = ["wikidata", "duckdb", "json", "dump", "database"]
+categories = ["algorithms", "database", "mathematics", "science"]
 
 [dependencies]
 chrono = "0.4.23"
