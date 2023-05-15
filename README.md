@@ -20,10 +20,17 @@ wd2duckdb --json <JSON_FILE> --database <DUCKDB_FILE>
 
 Use `-` as `<JSON_FILE>` to read from standard input instead of from a file.
 This makes it possible to build a pipeline that processes JSON data as it is
-being decompressed, without having to decompress the full dump to disk:
+being decompressed, without having to decompress the full dump to disk. In case
+of a `.bz2` file, you can use the following instruction:
 
 ```
 bzcat latest-all.json.bz2 | wd2duckdb --json - --database <DUCKDB_FILE>
+```
+
+In case of a `.gz` compressed file, the following is required:
+
+```
+gunzip latest-all.json.gz | wd2duckdb --json - --database <DUCKDB_FILE>
 ```
 
 ## Database structure
