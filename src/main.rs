@@ -10,7 +10,7 @@ use lazy_static::lazy_static;
 use r2d2::{Pool, PooledConnection};
 use rayon::prelude::*;
 use std::fs::File;
-use std::io::{stdout, BufRead, BufReader, Write};
+use std::io::{stdin, stdout, BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use wikidata::{Entity, Lang, Rank};
@@ -265,12 +265,18 @@ fn main() -> Result<(), String> {
     }
 
     // We open the JSON file. Notice that some error handling has to be performed as errors may
-    // occur in the process of opening the file provided by the user :(
-    let json_file = match File::open(&args.json) {
-        Ok(file) => file,
-        Err(error) => return Err(format!("Error opening JSON file. {}", error)),
+    // occur in the process of opening the file provided by the user. More in more, we have to
+    // check if the file is the standard input or a file in the file system. In the first case, we
+    // use the standard input as the reader; otherwise, we use the file provided by the user :D
+    let reader: Box<dyn Read + Send> = if args.json == "-" {
+        Box::new(stdin())
+    } else {
+        Box::new(match File::open(&args.json) {
+            Ok(file) => file,
+            Err(error) => return Err(format!("Error opening JSON file. {}", error)),
+        })
     };
-    let reader = BufReader::new(json_file);
+    let reader = BufReader::new(reader);
 
     // We open a database connection. We are attempting to put the outcome of the JSON processing
     // into a .duckdb file. As a result, the data must be saved to disk. In fact, the result will be

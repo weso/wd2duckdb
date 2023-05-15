@@ -7,4 +7,6 @@
 
 .idea
 *.json
+*.gz
 *.duckdb
+*.wal
