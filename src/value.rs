@@ -1,12 +1,11 @@
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Utc};
 use duckdb::{params, DuckdbConnectionManager, Params};
 use lazy_static::lazy_static;
 use r2d2::PooledConnection;
 use std::slice::Iter;
 use wikidata::ClaimValueData;
 
-use crate::id::{f_id, l_id, p_id, q_id, s_id};
-use crate::LANG;
+use crate::{id::Id, LANG};
 
 /// The `Table` enum defines the different types of data that can be stored in the
 /// DuckDB database for a Wikidata item. Each variant of the enum corresponds to a
@@ -103,13 +102,13 @@ impl Table {
     /// Output:
     /// ```
     /// Table name: string
-    /// Columns: [("src_id", "INTEGER NOT NULL"), ("property_id", "INTEGER NOT NULL"), ("dst_id", "INTEGER NOT NULL"), ("string", "TEXT NOT NULL")]
+    /// Columns: [("src_id", "UBIGINT NOT NULL"), ("property_id", "UBIGINT NOT NULL"), ("dst_id", "UBIGINT NOT NULL"), ("string", "TEXT NOT NULL")]
     /// ```
     fn table_definition(&self) -> (&str, Vec<(&str, &str)>) {
-        let mut columns = vec![
-            ("src_id", "INTEGER NOT NULL"),
-            ("property_id", "INTEGER NOT NULL"),
-            ("dst_id", "INTEGER NOT NULL"),
+        let mut columns: Vec<(&str, &str)> = vec![
+            ("src_id", "UBIGINT NOT NULL"),
+            ("property_id", "UBIGINT NOT NULL"),
+            ("dst_id", "UBIGINT NOT NULL"),
         ];
 
         // For the sake of simplicity, those entities that annotate no additional value; that is,
@@ -123,18 +122,18 @@ impl Table {
             Table::Coordinates { .. } => (
                 "coordinate",
                 vec![
-                    ("latitude", "REAL NOT NULL"),
-                    ("longitude", "REAL NOT NULL"),
-                    ("precision", "REAL NOT NULL"),
+                    ("latitude", "DOUBLE NOT NULL"),
+                    ("longitude", "DOUBLE NOT NULL"),
+                    ("precision", "DOUBLE NOT NULL"),
                     ("globe_id", "INTEGER NOT NULL"),
                 ],
             ),
             Table::Quantity { .. } => (
                 "quantity",
                 vec![
-                    ("amount", "REAL NOT NULL"),
-                    ("lower_bound", "REAL"),
-                    ("upper_bound", "REAL"),
+                    ("amount", "DOUBLE NOT NULL"),
+                    ("lower_bound", "DOUBLE"),
+                    ("upper_bound", "DOUBLE"),
                     ("unit_id", "INTEGER"),
                 ],
             ),
@@ -342,10 +341,20 @@ impl Table {
                     unit_id
                 ],
             ),
-            Table::Time { time, precision } => self.insert(
-                connection,
-                params![src_id, property_id, src_id, time, precision],
-            ),
+            Table::Time { time, precision } => {
+                // We have to handle years wich are greater than the maximum possible value :D
+                if time.year() < 9999 {
+                    self.insert(
+                        connection,
+                        params![src_id, property_id, src_id, time, precision],
+                    )
+                } else {
+                    self.insert(
+                        connection,
+                        params![src_id, property_id, src_id, "infinity", precision],
+                    )
+                }
+            }
         }
     }
 }
@@ -365,10 +374,10 @@ impl From<ClaimValueData> for Table {
                 latitude: lat,
                 longitude: lon,
                 precision,
-                globe_id: q_id(globe),
+                globe_id: u64::from(Id::Qid(globe)),
             },
-            Item(id) => Self::Entity(q_id(id)),
-            Property(id) => Self::Entity(p_id(id)),
+            Item(id) => Self::Entity(u64::from(Id::Qid(id))),
+            Property(id) => Self::Entity(u64::from(Id::Pid(id))),
             String(string) => Self::String(string),
             MonolingualText(text) => Self::String(text.text),
             MultilingualText(texts) => {
@@ -389,7 +398,7 @@ impl From<ClaimValueData> for Table {
                 amount,
                 lower_bound,
                 upper_bound,
-                unit_id: unit.map(q_id),
+                unit_id: unit.map(|id| u64::from(Id::Qid(id))),
             },
             DateTime {
                 date_time,
@@ -403,9 +412,9 @@ impl From<ClaimValueData> for Table {
             GeoShape(string) => Self::String(string),
             MusicNotation(string) => Self::String(string),
             TabularData(string) => Self::String(string),
-            Lexeme(id) => Self::Entity(l_id(id)),
-            Form(id) => Self::Entity(f_id(id)),
-            Sense(id) => Self::Entity(s_id(id)),
+            Lexeme(id) => Self::Entity(u64::from(Id::Lid(id))),
+            Form(id) => Self::Entity(u64::from(Id::Fid(id))),
+            Sense(id) => Self::Entity(u64::from(Id::Sid(id))),
             NoValue => Self::None,
             UnknownValue => Self::Unknown,
         }

@@ -8,14 +8,13 @@ use duckdb::{params, DuckdbConnectionManager, Error};
 use humantime::format_duration;
 use lazy_static::lazy_static;
 use r2d2::{Pool, PooledConnection};
-use rayon::prelude::*;
 use std::fs::File;
 use std::io::{stdin, stdout, BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 use wikidata::{Entity, Lang, Rank};
 
-use crate::id::{l_id, p_id, q_id};
+use crate::id::Id;
 use crate::value::Table;
 
 // Allows the declaration of Global variables using functions inside of them. In this case,
@@ -23,6 +22,7 @@ use crate::value::Table;
 lazy_static! {
     static ref LANG: Lang = Lang("en".to_owned());
     static ref CHUNK_SIZE: usize = 50_000_000;
+    static ref INSERTS_PER_TRANSACTION: usize = 1_000;
 }
 
 #[derive(Parser, Debug)]
@@ -112,11 +112,11 @@ fn store_entity(
 ) -> Result<(), String> {
     use wikidata::WikiId::*;
 
-    let src_id = match entity.id {
-        EntityId(id) => q_id(id),
-        PropertyId(id) => p_id(id),
-        LexemeId(id) => l_id(id),
-    };
+    let src_id = u64::from(match entity.id {
+        EntityId(id) => Id::Qid(id),
+        PropertyId(id) => Id::Pid(id),
+        LexemeId(id) => Id::Lid(id),
+    });
 
     // TODO: try to check for the error here ExpectedString
     let mut insert_into = match connection
@@ -139,9 +139,11 @@ fn store_entity(
         // In case the claim value stores some outdated or wrong information, we ignore it. The
         // deprecated annotation indicates that this piece of information should be ignored
         if claim_value.rank != Rank::Deprecated {
-            if let Err(error) =
-                Table::from(claim_value.data).store(connection, src_id, p_id(property_id))
-            {
+            if let Err(error) = Table::from(claim_value.data).store(
+                connection,
+                src_id,
+                u64::from(Id::Pid(property_id)),
+            ) {
                 return Err(format!("Error inserting into TABLE: {:?}", error));
             }
         }
@@ -203,7 +205,7 @@ fn insert_entity(
     // By using simd_json we parse the string to a Value. In this regard, the line has to be a valid
     // JSON by itself. As we are sure that Wikidata dumps are an enumeration of JSON objects: one
     // per line in the document, we can use this algorithm for retrieving each entity in the dump
-    let value = match unsafe { simd_json::from_str(&mut line) } {
+    let value = match serde_json::from_str(&line) {
         Ok(value) => value,
         Err(error) => {
             return Err(format!(
@@ -215,7 +217,6 @@ fn insert_entity(
 
     // Once we have the JSON value parsed, we try to transform it into a Wikidata entity, that will
     // be stored later. This is basically the same object as before, but arranged in a better manner
-    println!("{}: {:?}", line_number, value);
     let entity = match Entity::from_json(value) {
         Ok(entity) => entity,
         Err(error) => {
@@ -248,7 +249,7 @@ fn insert_entity(
 /// the point in time when a certain process started. It is used in the
 /// `print_progress` function to calculate the elapsed time since the process
 /// started.
-fn print_progress(line_number: i32, start_time: Instant) {
+fn print_progress(line_number: u32, start_time: Instant) {
     print!(
         "\x1B[2K\r{} entities processed in {}.",
         line_number,
@@ -323,19 +324,56 @@ fn main() -> Result<(), String> {
         return Err(format!("Error creating tables. {}", error));
     }
 
+    match pool.get() {
+        Ok(connection) => {
+            if let Err(error) = connection.execute_batch("BEGIN TRANSACTION;") {
+                return Err(format!("Error starting transaction: {}", error));
+            }
+        }
+        Err(error) => return Err(format!("Error opening connection. {}", error)),
+    };
+
     reader
         .lines() // we retrieve the iterator over the lines in the
         .enumerate() // we enumerate the iterator so we can know the line number
-        .par_bridge() // we parallelize the iterator
         .for_each(
             // for each line in the parallel iterator ...
-            |(line_number, line)|
+            |(line_number, line)| {
                 // try to insert the entity in the database and handle errors appropriately
-                if let Err(error) =  insert_entity(& pool.get(), line.unwrap(), line_number as u32) {
+                if let Err(error) = insert_entity(&pool.get(), line.unwrap(), line_number as u32) {
                     // do not halt execution in case an error happens, just warn the user :D
                     eprintln!("Error inserting entity. {}", error);
-                },
+                }
+
+                // Transactions can improve performance by reducing the number of disk
+                // writes and network round trips. When you wrap multiple inserts within a transaction,
+                // the database can optimize the write operations by batching them together and
+                // committing them as a single unit. This can reduce the overhead of repeated disk I/O
+                // operations and improve overall insert speed.
+                if line_number > 0 && line_number % INSERTS_PER_TRANSACTION.to_owned() == 0 {
+                    if let Ok(connection) = &pool.get() {
+                        if let Err(error) = connection.execute_batch(
+                            "
+                            END TRANSACTION;
+                            BEGIN TRANSACTION;
+                            ",
+                        ) {
+                            eprintln!(
+                                "\nError committing transaction at line {}: {}",
+                                line_number, error,
+                            );
+                        }
+                        print_progress(line_number as u32, start_time);
+                    } else {
+                        eprintln!("Error creating the connection for the transaction");
+                    }
+                }
+            },
         );
+
+    if let Err(error) = connection.execute_batch("END TRANSACTION;") {
+        return Err(format!("Error committing transaction: {}", error));
+    }
 
     if let Err(error) = create_indices(&connection) {
         return Err(format!("Error creating indices. {}", error));

@@ -1,91 +1,70 @@
-// SPDX-License-Identifier: GPL-3.0-or-later
-// Copyright (C) 2022  Philipp Emanuel Weidmann <pew@worldwidemann.com>
-
 use wikidata::{Fid, Lid, Pid, Qid, Sid};
 
-/// The function `q_id` takes a `Qid` struct and returns its `id` field as a `u64`
-/// value.
-///
-/// Arguments:
-///
-/// * `id`: The parameter `id` is of type `Qid`, which is a tuple struct containing
-/// a single field of type `u64`. The function `q_id` takes this `id` parameter and
-/// returns the value of its first field, which is of type `u64`.
-///
-/// Returns:
-///
-/// The function `q_id` is returning an unsigned 64-bit integer which is the value
-/// of the first field (`id.0`) of the `Qid` struct passed as an argument.
-pub fn q_id(id: Qid) -> u64 {
-    id.0
+/// The `Id` enum is defining different types of identifiers that can be used in the
+/// Wikidata database. Each variant of the enum corresponds to a different type of
+/// identifier: `Fid` for a form ID, `Lid` for a lexeme ID, `Pid` for a property ID,
+/// `Qid` for a item ID, and `Sid` for a sense ID. This enum is used to represent
+/// and manipulate these different types of IDs in the code.
+pub enum Id {
+    Fid(Fid),
+    Lid(Lid),
+    Pid(Pid),
+    Qid(Qid),
+    Sid(Sid),
 }
 
-/// The function takes a Pid struct as input and returns its ID plus 1 billion.
-///
-/// Arguments:
-///
-/// * `id`: The parameter `id` is of type `Pid`, which is likely a custom struct or
-/// type defined elsewhere in the codebase. The function `p_id` takes an instance of
-/// `Pid` as input and returns an unsigned 64-bit integer. The implementation of the
-/// function adds the value of the
-///
-/// Returns:
-///
-/// The function `p_id` takes a parameter `id` of type `Pid` and returns an unsigned
-/// 64-bit integer. The returned value is the sum of the first element of the tuple
-/// `id` and `1_000_000_000`.
-pub fn p_id(id: Pid) -> u64 {
-    id.0 + 1_000_000_000
+/// This code defines a conversion function from a string slice (`&str`) to an `Id`
+/// enum. The function takes a string slice as input and matches the first character
+/// of the string to determine the type of ID. If the first character is "L", "P",
+/// "Q", "F", or "S", the function creates a corresponding `Lid`, `Pid`, `Qid`,
+/// `Fid`, or `Sid` value and returns it wrapped in the `Id` enum. If the first
+/// character is anything else, the function panics with an error message. The
+/// function is implemented using the `From` trait, which allows for automatic
+/// conversion between types.
+impl<'a> From<&'a str> for Id {
+    fn from(value: &'a str) -> Self {
+        match value.get(0..1) {
+            Some("L") => Self::Lid(Lid(value[1..].parse::<u64>().unwrap())),
+            Some("P") => Self::Pid(Pid(value[1..].parse::<u64>().unwrap())),
+            Some("Q") => Self::Qid(Qid(value[1..].parse::<u64>().unwrap())),
+            Some("F") => {
+                let mut parts = value[1..].split('-');
+                Self::Fid(Fid(
+                    Lid(parts.next().unwrap().parse::<u64>().unwrap()),
+                    parts.next().unwrap()[1..].parse::<u16>().unwrap(),
+                ))
+            }
+            Some("S") => {
+                let mut parts = value[1..].split('-');
+                Self::Sid(Sid(
+                    Lid(parts.next().unwrap().parse::<u64>().unwrap()),
+                    parts.next().unwrap()[1..].parse::<u16>().unwrap(),
+                ))
+            }
+            _ => panic!("Invalid ID: {}", value),
+        }
+    }
 }
 
-/// The function takes an input of type `Lid` and returns an output of type `u64` by
-/// adding 2 billion to the value of the input.
-///
-/// Arguments:
-///
-/// * `id`: The parameter `id` is of type `Lid`, which is a tuple struct with a
-/// single field of type `u64`.
-///
-/// Returns:
-///
-/// The function `l_id` takes an argument of type `Lid` and returns an unsigned
-/// 64-bit integer. The returned value is the sum of the first element of the tuple
-/// `id` and the constant value `2_000_000_000`.
-pub fn l_id(id: Lid) -> u64 {
-    id.0 + 2_000_000_000
-}
-
-/// The function takes a tuple of two values and returns a u64 value by adding the
-/// `LexemeId` to the `FormId` multiplied by 100 billion.
-///
-/// Arguments:
-///
-/// * `id`: The parameter `id` is of type `Fid`, which takes two parameters, a
-/// `LexemeId` and a `FormId`.
-///
-/// Returns:
-///
-/// The function `f_id` takes a tuple `id` of two values, where the first value is
-/// of type `u32` and the second value is of type `u8`. The function returns a value
-/// of type `u64` which is the result of adding the output of the function `l_id`
-/// when called with the first value of the tuple `id.0`, and the `FormId` multiplied
-/// by 100 billion.
-pub fn f_id(id: Fid) -> u64 {
-    l_id(id.0) + (id.1 as u64 * 100_000_000_000)
-}
-
-/// The function takes a tuple of two values and returns a u64 value by adding the
-/// `LexemeId` to the `SenseId` multiplied by 100 billion and to 10 million.
-///
-///
-/// Arguments:
-///
-/// * `id`: The parameter `id` is of type `Sid`, which takes two parameters, a
-/// `LexemeId` and a `SenseId`.
-///
-/// Returns:
-///
-/// The function `s_id` is returning an unsigned 64-bit integer.
-pub fn s_id(id: Sid) -> u64 {
-    l_id(id.0) + (id.1 as u64 * 100_000_000_000) + 10_000_000_000
+/// This code defines a conversion function from an `Id` enum to a `u64` integer.
+/// The function takes an `Id` value as input and matches on its variant to
+/// determine the type of ID. Depending on the type of ID, the function performs a
+/// different calculation to convert it to a `u64` integer. For example, if the `Id`
+/// is a `Fid` (form ID), the function converts its corresponding `Lid` (lexeme ID)
+/// to a `u64` integer and adds the form ID's numeric suffix multiplied by 100
+/// billion. The resulting `u64` integer is returned. This conversion function
+/// allows for easy comparison and manipulation of different types of IDs in the
+/// code.
+impl From<Id> for u64 {
+    fn from(id: Id) -> Self {
+        match id {
+            Id::Fid(fid) => u64::from(Id::Lid(fid.0)) + (fid.1 as u64 * 100_000_000_000),
+            Id::Lid(lid) => lid.0 + 2_000_000_000,
+            Id::Pid(pid) => pid.0 + 1_000_000_000,
+            Id::Qid(qid) => qid.0,
+            Id::Sid(sid) => {
+                u64::from(Id::Lid(sid.0)) + (sid.1 as u64 * 100_000_000_000) + 10_000_000_000
+            }
+        }
+    }
 }

@@ -33,6 +33,17 @@ In case of a `.gz` compressed file, the following is required:
 gunzip latest-all.json.gz | wd2duckdb --json - --database <DUCKDB_FILE>
 ```
 
+In case you want to write changes directly to the standard ouput; that is, without
+creating a file for the uncompressed `.json`, you can do the following:
+
+```
+gunzip -c latest-all.json.gz | wd2duckdb --json - --database <DUCKDB_FILE>
+```
+
+If you are working with large dumps where the uncompressed `.json` file size is in
+the order of Terabytes, it is best to choose the last option. The `.duckdb` file,
+which is more memory-efficient, may thus be created immediately.
+
 ## Database structure
 
 <p align="center">
