@@ -286,11 +286,18 @@ fn main() -> Result<(), String> {
         return Err(format!("Error creating tables. {}", error));
     }
 
+    // Transactions can improve performance by reducing the number of disk
+    // writes and network round trips. When you wrap multiple inserts within a transaction,
+    // the database can optimize the write operations by batching them together and
+    // committing them as a single unit. This can reduce the overhead of repeated disk I/O
+    // operations and improve overall insert speed.
     let transaction = match connection.transaction() {
         Ok(transaction) => transaction,
         Err(error) => return Err(format!("Error opening transaction. {}", error)),
     };
 
+    // Appenders also allow inserting entities in a better fashion. This allows a faster
+    // performance and an easier implementation of the algorithm
     let mut appender_helper = AppenderHelper::new(&transaction);
 
     reader
@@ -307,11 +314,6 @@ fn main() -> Result<(), String> {
                     eprintln!("Error inserting entity. {}", error);
                 }
 
-                // Transactions can improve performance by reducing the number of disk
-                // writes and network round trips. When you wrap multiple inserts within a transaction,
-                // the database can optimize the write operations by batching them together and
-                // committing them as a single unit. This can reduce the overhead of repeated disk I/O
-                // operations and improve overall insert speed.
                 if line_number > 0 && line_number % INSERTS_PER_TRANSACTION.to_owned() == 0 {
                     print_progress(line_number as u32, start_time);
                 }
