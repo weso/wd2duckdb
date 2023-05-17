@@ -6,10 +6,26 @@ use wikidata::ClaimValueData;
 
 use crate::{id::Id, LANG};
 
+/// The `AppenderHelper` struct contains a hashmap of `Appender` structs with string
+/// keys.
+///
+/// Properties:
+///
+/// * `appenders`: `appenders` is a property of type `HashMap<&'a str,
+/// Appender<'a>>` in a struct called `AppenderHelper`. It is a hash map that stores
+/// references to `Appender` objects, with keys of type `&'a str`.
 pub struct AppenderHelper<'a> {
     appenders: HashMap<&'a str, Appender<'a>>,
 }
 
+/// The above code is implementing a new method for the `AppenderHelper` struct in
+/// Rust. The method takes a reference to a `Transaction` object and creates a new
+/// instance of `AppenderHelper` struct. Inside the method, a new `HashMap` is
+/// created to store appenders for each table. The `Table::iterator()` method is
+/// called to iterate over all tables, and for each table, the
+/// `transaction.appender()` method is called to get the appender for that table. If
+/// the appender is successfully obtained, it is inserted into the `appenders`
+/// HashMap with the
 impl<'a> AppenderHelper<'a> {
     pub fn new(transaction: &'a Transaction) -> Self {
         let mut appenders = HashMap::new();
@@ -22,13 +38,13 @@ impl<'a> AppenderHelper<'a> {
     }
 }
 
-/// The `Table` enum defines the different types of data that can be stored in the
-/// DuckDB database for a Wikidata item. Each variant of the enum corresponds to a
-/// different type of data, such as an `Entity`, a `String`, `Coordinate`, a `Quantity`,
-/// or a `Tune`. The `Unknown` variant is used for data types that are not recognized,
-/// and the `None` variant is used for cases where no data is present. The enum also
-/// provides methods for creating tables and indices in the database, as well as
-/// inserting data into the tables.
+/// The above code is defining an enum called `Table` in Rust programming language.
+/// The enum has several variants including `Vertex` which has fields `id`, `label`,
+/// and `description`, `Entity` which has a single field `u64`, `String` which has a
+/// single field `String`, `Coordinates` which has fields `latitude`, `longitude`,
+/// `precision`, and `globe_id`, `Quantity` which has fields `amount`,
+/// `lower_bound`, `upper_bound`, and `unit_id`, `Time` which has fields `time` and
+/// `precision`, `Unknown`,
 pub enum Table {
     Vertex {
         id: u64,
@@ -58,6 +74,12 @@ pub enum Table {
 }
 
 impl Table {
+    /// The function returns an iterator over a static array of tables in Rust.
+    ///
+    /// Returns:
+    ///
+    /// The function `iterator` returns an iterator over a static array of `Table`
+    /// values.
     pub fn iterator() -> Iter<'static, Table> {
         lazy_static! {
             static ref TABLES: [Table; 8] = [
@@ -175,6 +197,24 @@ impl Table {
         (self.as_ref(), columns)
     }
 
+    /// This function inserts data into a knowledge graph database.
+    ///
+    /// Arguments:
+    ///
+    /// * `appender_helper`: A mutable reference to an `AppenderHelper` struct,
+    /// which is used to append rows to the various tables in the database.
+    /// * `src_id`: The ID of the source vertex in the knowledge graph.
+    /// * `label`: An optional reference to a String that represents the label of
+    /// the vertex being inserted into the database.
+    /// * `description`: An optional string parameter that represents the
+    /// description of a vertex in a knowledge graph.
+    /// * `property_id`: The ID of the property being inserted into the database.
+    ///
+    /// Returns:
+    ///
+    /// a `Result` with the `Ok` variant containing an empty tuple `()` if the
+    /// function executes successfully, and the `Err` variant containing an `Error`
+    /// if there is an error during execution.
     pub fn insert(
         &self,
         appender_helper: &mut AppenderHelper,
@@ -280,21 +320,21 @@ impl Table {
         Ok(())
     }
 
-    /// This function creates a table in a DuckDB database with the specified table name
-    /// and columns.
+    /// This function creates a table in a database using the provided transaction and
+    /// table definition.
     ///
     /// Arguments:
     ///
-    /// * `connection`: `connection` is a reference to a `PooledConnection` object from
-    /// the `DuckdbConnectionManager` type. It is used to establish a connection to a
-    /// DuckDB database and execute SQL queries on it.
+    /// * `transaction`: A reference to a transaction object that is used to execute the
+    /// SQL query to create a table in a database. The transaction object is typically
+    /// created by starting a transaction on a database connection and then passing it
+    /// to this function.
     ///
     /// Returns:
     ///
-    /// The `create_table` function is returning a `duckdb::Result<()>`, which is a type
-    /// alias for `Result<(), duckdb::Error>`. This means that the function returns a
-    /// `Result` object that either contains a `()` value (i.e. nothing) if the table
-    /// creation was successful, or a `duckdb::Error` object if an error occurred.
+    /// a `Result` object with the `Ok` variant containing an empty tuple `()` if the
+    /// table creation is successful, or an `Error` object if there is an error during
+    /// the execution of the SQL statement.
     pub fn create_table(&self, transaction: &Transaction) -> Result<(), Error> {
         let (table_name, columns) = self.table_definition();
         transaction.execute_batch(&format!(
@@ -308,20 +348,19 @@ impl Table {
         ))
     }
 
-    /// The function creates indices for specific columns in a table using a connection
-    /// to a DuckDB database.
+    /// The function creates indices for specific columns in a table using SQL
+    /// statements.
     ///
     /// Arguments:
     ///
-    /// * `connection`: The `connection` parameter is a reference to a
-    /// `PooledConnection` object from the `DuckdbConnectionManager` type. It is used to
-    /// execute SQL queries on a DuckDB database.
+    /// * `transaction`: A reference to a transaction object that is used to execute SQL
+    /// queries on a database.
     ///
     /// Returns:
     ///
-    /// a `duckdb::Result<()>`, which is a result type indicating success or failure of
-    /// the operation. The `()` inside the `Result` indicates that the function returns
-    /// no meaningful value on success, but may return an error if the operation fails.
+    /// a `Result` enum with either an `Ok(())` value indicating that the indices were
+    /// successfully created, or an `Err` value containing an `Error` object if an error
+    /// occurred during the execution of the function.
     pub fn create_indices(&self, transaction: &Transaction) -> Result<(), Error> {
         let (table_name, columns) = self.table_definition();
 
@@ -343,6 +382,11 @@ impl Table {
     }
 }
 
+/// The above code is implementing the `AsRef` trait for the `Table` enum in Rust.
+/// This trait allows a type to be borrowed as a reference to another type. In this
+/// implementation, the `as_ref` method returns a string slice that represents the
+/// type of the `Table` enum variant. The method matches each variant of the enum
+/// and returns a string slice that corresponds to the variant.
 impl AsRef<str> for Table {
     fn as_ref(&self) -> &str {
         match self {

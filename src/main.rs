@@ -64,21 +64,18 @@ fn create_tables(connection: &mut Connection) -> Result<(), Error> {
     Ok(transaction.commit()?)
 }
 
-/// The function creates an index for the id column in the vertices table and calls
-/// the create_indices function for other tables.
+/// This function creates indices for the id column in the vertices table.
 ///
 /// Arguments:
 ///
-/// * `connection`: A reference to a `PooledConnection` object from the
-/// `DuckdbConnectionManager` type, which represents a connection to a DuckDB
-/// database.
+/// * `transaction`: A reference to a Transaction object, which is used to perform
+/// database operations.
 ///
 /// Returns:
 ///
-/// The function `create_indices` is returning a `duckdb::Result<()>`, which is a
-/// type alias for `Result<(), duckdb::Error>`. This means that the function returns
-/// a result that can either be Ok(()) if the execution was successful, or an error
-/// of type `duckdb::Error` if something went wrong.
+/// The function `create_indices` returns a `Result` enum with either an `Ok(())`
+/// value indicating that the function executed successfully, or an `Err` value
+/// containing an `Error` object if an error occurred during execution.
 fn create_indices(transaction: &Transaction) -> Result<(), Error> {
     // We are interested only in creating an index for the id column in the vertices table, as we
     // will only query over it. The rest of the data that is stored just extends the knowledge that
@@ -89,27 +86,23 @@ fn create_indices(transaction: &Transaction) -> Result<(), Error> {
     Ok(())
 }
 
-/// The function parses a JSON string, transforms it into a Wikidata entity, and
-/// stores it in a database.
+/// The function parses and stores Wikidata entities from a JSON dump file.
 ///
 /// Arguments:
 ///
-/// * `connection`: A reference to a connection to a database, specifically a DuckDB
-/// database, wrapped in a `Result` type that can either contain the connection or
-/// an error if the connection could not be established.
+/// * `appender_helper`: A mutable reference to an AppenderHelper struct, which is
+/// used to append entities to a storage backend.
 ///
-/// * `line`: A string representing a single line of a Wikidata dump file, which
-/// contains a JSON object representing a Wikidata entity.
+/// * `line`: A string representing a line of JSON data from a Wikidata dump file.
 ///
-/// * `line_number`: The line number parameter represents the line number of the
-/// current line being processed in a file. It is used for error reporting purposes,
-/// to help identify which line caused an error if one occurs during the processing
-/// of the file.
+/// * `line_number`: The line number of the current line being processed in the
+/// input file.
 ///
 /// Returns:
 ///
-/// a `Result` with an empty tuple `()` as the success value and a `String` as the
-/// error value.
+/// a `Result` type with the `Ok` variant containing an empty tuple `()` if the
+/// function executes successfully, and the `Err` variant containing a `String` with
+/// an error message if an error occurs during execution.
 fn insert_entity(
     appender_helper: &mut AppenderHelper,
     mut line: String,
@@ -167,23 +160,23 @@ fn insert_entity(
     Ok(())
 }
 
-/// The function stores an entity and its associated properties in a database.
+/// This function stores entity information in a table, ignoring deprecated
+/// information.
 ///
 /// Arguments:
 ///
-/// * `connection`: A connection to a DuckDB database, which is used to execute SQL
-/// queries.
+/// * `appender_helper`: A mutable reference to an AppenderHelper struct, which is
+/// used to append data to a database table.
 ///
-/// * `entity`: The `entity` parameter is an instance of the `Entity` struct, which
-/// represents a Wikidata entity (such as an item, property, or lexeme) and contains
-/// information about its labels, descriptions, and claims. The function
-/// `store_entity` takes this entity and stores its information in a DuckDB database.
+/// * `entity`: An object representing a Wikidata entity, which can be an item,
+/// property, or lexeme. It contains information such as the entity's ID, labels,
+/// descriptions, and claims (which are statements about the entity, such as its
+/// properties and values).
 ///
 /// Returns:
 ///
-/// The function `store_entity` returns a `Result` with an empty tuple `()` as the
-/// success value or an `Error` if an error occurs during the execution of the
-/// function.
+/// a `Result` type with either an empty `Ok(())` value indicating success or a
+/// `String` value containing an error message in case of failure.
 fn store_entity(appender_helper: &mut AppenderHelper, entity: Entity) -> Result<(), String> {
     use wikidata::WikiId::*;
 
@@ -212,18 +205,18 @@ fn store_entity(appender_helper: &mut AppenderHelper, entity: Entity) -> Result<
     Ok(())
 }
 
-/// The function prints the progress of entity processing with the current line
-/// number and elapsed time.
+/// The function prints the progress of entity processing with the line number and
+/// elapsed time.
 ///
 /// Arguments:
 ///
-/// * `line_number`: An integer representing the current line number or the number
-/// of entities processed so far.
+/// * `line_number`: An unsigned 32-bit integer representing the current line number
+/// being processed.
 ///
-/// * `start_time`: `start_time` is a variable of type `Instant` which represents
-/// the point in time when a certain process started. It is used in the
-/// `print_progress` function to calculate the elapsed time since the process
-/// started.
+/// * `start_time`: The `start_time` parameter is an instance of the `Instant`
+/// struct, which represents a point in time. It is used to calculate the duration
+/// of time that has elapsed since a certain point in time, which is typically the
+/// start of a process or operation. In this case, it is used
 fn print_progress(line_number: u32, start_time: Instant) {
     print!(
         "\x1B[2K\r{} entities processed in {}.",
