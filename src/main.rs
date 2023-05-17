@@ -4,14 +4,14 @@ mod id;
 mod value;
 
 use clap::Parser;
-use duckdb::{params, DuckdbConnectionManager, Error};
+use duckdb::{Connection, Error, Transaction};
 use humantime::format_duration;
 use lazy_static::lazy_static;
-use r2d2::{Pool, PooledConnection};
 use std::fs::File;
 use std::io::{stdin, stdout, BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
+use value::AppenderHelper;
 use wikidata::{Entity, Lang, Rank};
 
 use crate::id::Id;
@@ -51,14 +51,17 @@ struct Args {
 ///
 /// The function `create_tables` is returning a `Result` with an empty tuple `()` as
 /// the success value and an `Error` as the error value.
-fn create_tables(connection: &PooledConnection<DuckdbConnectionManager>) -> Result<(), Error> {
-    connection.execute_batch("CREATE TABLE vertex (id INTEGER, label TEXT, description TEXT);")?;
+fn create_tables(connection: &mut Connection) -> Result<(), Error> {
+    let transaction = match connection.transaction() {
+        Ok(transaction) => transaction,
+        Err(_) => return Err(Error::AppendError),
+    };
 
     for table in Table::iterator() {
-        table.create_table(connection)?;
+        table.create_table(&transaction)?;
     }
 
-    Ok(())
+    Ok(transaction.commit()?)
 }
 
 /// The function creates an index for the id column in the vertices table and calls
@@ -76,79 +79,13 @@ fn create_tables(connection: &PooledConnection<DuckdbConnectionManager>) -> Resu
 /// type alias for `Result<(), duckdb::Error>`. This means that the function returns
 /// a result that can either be Ok(()) if the execution was successful, or an error
 /// of type `duckdb::Error` if something went wrong.
-fn create_indices(connection: &PooledConnection<DuckdbConnectionManager>) -> duckdb::Result<()> {
+fn create_indices(transaction: &Transaction) -> Result<(), Error> {
     // We are interested only in creating an index for the id column in the vertices table, as we
     // will only query over it. The rest of the data that is stored just extends the knowledge that
     // we store, but has no relevance in regards with future processing :D
-    connection.execute_batch("CREATE INDEX vertex_id_index ON vertex (id);")?;
-
     for table in Table::iterator() {
-        table.create_indices(connection)?;
+        table.create_indices(transaction)?;
     }
-
-    Ok(())
-}
-
-/// The function stores an entity and its associated properties in a database.
-///
-/// Arguments:
-///
-/// * `connection`: A connection to a DuckDB database, which is used to execute SQL
-/// queries.
-///
-/// * `entity`: The `entity` parameter is an instance of the `Entity` struct, which
-/// represents a Wikidata entity (such as an item, property, or lexeme) and contains
-/// information about its labels, descriptions, and claims. The function
-/// `store_entity` takes this entity and stores its information in a DuckDB database.
-///
-/// Returns:
-///
-/// The function `store_entity` returns a `Result` with an empty tuple `()` as the
-/// success value or an `Error` if an error occurs during the execution of the
-/// function.
-fn store_entity(
-    connection: &PooledConnection<DuckdbConnectionManager>,
-    entity: Entity,
-) -> Result<(), String> {
-    use wikidata::WikiId::*;
-
-    let src_id = u64::from(match entity.id {
-        EntityId(id) => Id::Qid(id),
-        PropertyId(id) => Id::Pid(id),
-        LexemeId(id) => Id::Lid(id),
-    });
-
-    // TODO: try to check for the error here ExpectedString
-    let mut insert_into = match connection
-        .prepare_cached("INSERT INTO vertex (id, label, description) VALUES (?1, ?2, ?3)")
-    {
-        Ok(insert_into) => insert_into,
-        Err(error) => return Err(format!("Error preparing statement: {:?}", error)),
-    };
-
-    if let Err(error) = insert_into.execute(params![
-        // Allows the use of heterogeneous data as parameters to the prepared statement
-        src_id,                         // identifier of the entity
-        entity.labels.get(&LANG),       // label of the entity for a certain language
-        entity.descriptions.get(&LANG), // description of the entity for a certain language
-    ]) {
-        return Err(format!("Error inserting into TABLE VERTEX: {:?}", error));
-    };
-
-    for (property_id, claim_value) in entity.claims {
-        // In case the claim value stores some outdated or wrong information, we ignore it. The
-        // deprecated annotation indicates that this piece of information should be ignored
-        if claim_value.rank != Rank::Deprecated {
-            if let Err(error) = Table::from(claim_value.data).store(
-                connection,
-                src_id,
-                u64::from(Id::Pid(property_id)),
-            ) {
-                return Err(format!("Error inserting into TABLE: {:?}", error));
-            }
-        }
-    }
-
     Ok(())
 }
 
@@ -174,17 +111,10 @@ fn store_entity(
 /// a `Result` with an empty tuple `()` as the success value and a `String` as the
 /// error value.
 fn insert_entity(
-    connection: &Result<PooledConnection<DuckdbConnectionManager>, r2d2::Error>,
+    appender_helper: &mut AppenderHelper,
     mut line: String,
     line_number: u32,
 ) -> Result<(), String> {
-    // We try to open a connection. This should be done as we are in the context of a multi-threaded
-    // program. Thus, for us to avoid races, a new connection from the pool has to be retrieved :D
-    let conn = match connection {
-        Ok(connection) => connection,
-        Err(error) => return Err(format!("Error opening connection. {}", error)),
-    };
-
     // We have to remove the delimiters so the JSON parsing is performed in a safe environment. For
     // us to do so, we remove possible blanks both at the end and at the beginning of each line.
     // After such, we check if the line is empty or any of the possible delimiters ('[' or ']').
@@ -194,12 +124,12 @@ fn insert_entity(
         return Ok(()); // we just skip the line. It is not needed :D
     }
 
-    // Remove the trailing comma and newline character. This is extremely important for simd_json to
-    // process the lines properly. In general, a processing of the lines is required for simd_json
+    // Remove the trailing comma and newline character. This is extremely important for serde_json to
+    // process the lines properly. In general, a processing of the lines is required for serde_json
     // to work. We are making sure that the last character is a closing bracket; that is, the line
     // is a valid JSON
-    while !line.ends_with('}') {
-        line.pop();
+    if line.ends_with(',') {
+        line.truncate(line.len() - 1);
     }
 
     // By using simd_json we parse the string to a Value. In this regard, the line has to be a valid
@@ -227,11 +157,56 @@ fn insert_entity(
         }
     };
 
-    if let Err(error) = store_entity(conn, entity) {
+    if let Err(error) = store_entity(appender_helper, entity) {
         return Err(format!(
             "Error storing entity at line {}: {}",
             line_number, error
         ));
+    }
+
+    Ok(())
+}
+
+/// The function stores an entity and its associated properties in a database.
+///
+/// Arguments:
+///
+/// * `connection`: A connection to a DuckDB database, which is used to execute SQL
+/// queries.
+///
+/// * `entity`: The `entity` parameter is an instance of the `Entity` struct, which
+/// represents a Wikidata entity (such as an item, property, or lexeme) and contains
+/// information about its labels, descriptions, and claims. The function
+/// `store_entity` takes this entity and stores its information in a DuckDB database.
+///
+/// Returns:
+///
+/// The function `store_entity` returns a `Result` with an empty tuple `()` as the
+/// success value or an `Error` if an error occurs during the execution of the
+/// function.
+fn store_entity(appender_helper: &mut AppenderHelper, entity: Entity) -> Result<(), String> {
+    use wikidata::WikiId::*;
+
+    let src_id = u64::from(match entity.id {
+        EntityId(id) => Id::Qid(id),
+        PropertyId(id) => Id::Pid(id),
+        LexemeId(id) => Id::Lid(id),
+    });
+
+    for (property_id, claim_value) in entity.claims {
+        // In case the claim value stores some outdated or wrong information, we ignore it. The
+        // deprecated annotation indicates that this piece of information should be ignored
+        if claim_value.rank != Rank::Deprecated {
+            if let Err(error) = Table::from(claim_value.data).insert(
+                appender_helper,
+                src_id,                         // identifier of the entity
+                entity.labels.get(&LANG),       // label of the entity for a certain language
+                entity.descriptions.get(&LANG), // description of the entity for a certain language
+                u64::from(Id::Pid(property_id)),
+            ) {
+                return Err(format!("Error inserting into TABLE: {:?}", error));
+            }
+        }
     }
 
     Ok(())
@@ -294,20 +269,7 @@ fn main() -> Result<(), String> {
     // We open a database connection. We are attempting to put the outcome of the JSON processing
     // into a .duckdb file. As a result, the data must be saved to disk. In fact, the result will be
     // saved in the path specified by the user. Some IOErrors may occurs and should be handled
-    let manager = match DuckdbConnectionManager::file(database_path) {
-        Ok(manager) => manager,
-        Err(error) => {
-            return Err(format!(
-                "Error creating the DuckDB connection manager. {}",
-                error
-            ))
-        }
-    };
-    let pool = match Pool::new(manager) {
-        Ok(pool) => pool,
-        Err(error) => return Err(format!("Error creating the connection pool. {}", error)),
-    };
-    let connection = match pool.get() {
+    let mut connection = match Connection::open(database_path) {
         Ok(connection) => connection,
         Err(error) => return Err(format!("Error opening connection. {}", error)),
     };
@@ -320,18 +282,16 @@ fn main() -> Result<(), String> {
     // We create the tables of the database so the elements can be inserted. For us to do so, we
     // are creating one table per each primitive type that can be stored in Wikidata. For more
     // details, refer to value.rs file in this same directory
-    if let Err(error) = create_tables(&connection) {
+    if let Err(error) = create_tables(&mut connection) {
         return Err(format!("Error creating tables. {}", error));
     }
 
-    match pool.get() {
-        Ok(connection) => {
-            if let Err(error) = connection.execute_batch("BEGIN TRANSACTION;") {
-                return Err(format!("Error starting transaction: {}", error));
-            }
-        }
-        Err(error) => return Err(format!("Error opening connection. {}", error)),
+    let transaction = match connection.transaction() {
+        Ok(transaction) => transaction,
+        Err(error) => return Err(format!("Error opening transaction. {}", error)),
     };
+
+    let mut appender_helper = AppenderHelper::new(&transaction);
 
     reader
         .lines() // we retrieve the iterator over the lines in the
@@ -340,7 +300,9 @@ fn main() -> Result<(), String> {
             // for each line in the parallel iterator ...
             |(line_number, line)| {
                 // try to insert the entity in the database and handle errors appropriately
-                if let Err(error) = insert_entity(&pool.get(), line.unwrap(), line_number as u32) {
+                if let Err(error) =
+                    insert_entity(&mut appender_helper, line.unwrap(), line_number as u32)
+                {
                     // do not halt execution in case an error happens, just warn the user :D
                     eprintln!("Error inserting entity. {}", error);
                 }
@@ -351,31 +313,12 @@ fn main() -> Result<(), String> {
                 // committing them as a single unit. This can reduce the overhead of repeated disk I/O
                 // operations and improve overall insert speed.
                 if line_number > 0 && line_number % INSERTS_PER_TRANSACTION.to_owned() == 0 {
-                    if let Ok(connection) = &pool.get() {
-                        if let Err(error) = connection.execute_batch(
-                            "
-                            END TRANSACTION;
-                            BEGIN TRANSACTION;
-                            ",
-                        ) {
-                            eprintln!(
-                                "\nError committing transaction at line {}: {}",
-                                line_number, error,
-                            );
-                        }
-                        print_progress(line_number as u32, start_time);
-                    } else {
-                        eprintln!("Error creating the connection for the transaction");
-                    }
+                    print_progress(line_number as u32, start_time);
                 }
             },
         );
 
-    if let Err(error) = connection.execute_batch("END TRANSACTION;") {
-        return Err(format!("Error committing transaction: {}", error));
-    }
-
-    if let Err(error) = create_indices(&connection) {
+    if let Err(error) = create_indices(&transaction) {
         return Err(format!("Error creating indices. {}", error));
     }
 

@@ -12,11 +12,10 @@ categories = ["algorithms", "database", "mathematics", "science"]
 
 [dependencies]
 clap = { version = "4.1.8", features = ["derive"] }
-duckdb = { version = "0.7.1", features = ["bundled", "chrono", "r2d2"] }
+duckdb = { version = "0.7.1", features = ["bundled", "chrono"] }
 humantime = "2.1.0"
 chrono = "0.4.23"
 lazy_static = "1.4.0"
-r2d2 = "0.8.10"
 serde_json = "1.0"
 wikidata = "0.3.0"
 
