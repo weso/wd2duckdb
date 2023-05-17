@@ -135,7 +135,7 @@ fn insert_entity(
     // By using simd_json we parse the string to a Value. In this regard, the line has to be a valid
     // JSON by itself. As we are sure that Wikidata dumps are an enumeration of JSON objects: one
     // per line in the document, we can use this algorithm for retrieving each entity in the dump
-    let value = match serde_json::from_str(&line) {
+    let value = match unsafe { simd_json::from_str(&mut line) } {
         Ok(value) => value,
         Err(error) => {
             return Err(format!(
