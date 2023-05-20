@@ -4,7 +4,7 @@ mod id;
 mod value;
 
 use clap::Parser;
-use duckdb::{Connection, Error, Transaction};
+use duckdb::{params, Connection, DropBehavior, Error};
 use humantime::format_duration;
 use lazy_static::lazy_static;
 use std::fs::File;
@@ -61,7 +61,7 @@ fn create_tables(connection: &mut Connection) -> Result<(), Error> {
         table.create_table(&transaction)?;
     }
 
-    Ok(transaction.commit()?)
+    transaction.commit()
 }
 
 /// This function creates indices for the id column in the vertices table.
@@ -76,12 +76,12 @@ fn create_tables(connection: &mut Connection) -> Result<(), Error> {
 /// The function `create_indices` returns a `Result` enum with either an `Ok(())`
 /// value indicating that the function executed successfully, or an `Err` value
 /// containing an `Error` object if an error occurred during execution.
-fn create_indices(transaction: &Transaction) -> Result<(), Error> {
+fn create_indices(connection: &Connection) -> Result<(), Error> {
     // We are interested only in creating an index for the id column in the vertices table, as we
     // will only query over it. The rest of the data that is stored just extends the knowledge that
     // we store, but has no relevance in regards with future processing :D
     for table in Table::iterator() {
-        table.create_indices(transaction)?;
+        table.create_indices(connection)?;
     }
     Ok(())
 }
@@ -186,15 +186,31 @@ fn store_entity(appender_helper: &mut AppenderHelper, entity: Entity) -> Result<
         LexemeId(id) => Id::Lid(id),
     });
 
+    // We are only interested in the English label and description of the entity. This is because
+    // the rest of the information is not relevant for the processing that we are going to perform
+    // in the future. In this regard, we are only storing the English label and description of the
+    // entity in the vertices table of the database :D
+    if appender_helper
+        .appenders
+        .get_mut("vertex")
+        .unwrap()
+        .append_row(params![
+            src_id,
+            entity.labels.get(&LANG),
+            entity.descriptions.get(&LANG)
+        ])
+        .is_err()
+    {
+        return Err(format!("Error inserting into VERTEX: {:?}", entity.id));
+    }
+
     for (property_id, claim_value) in entity.claims {
         // In case the claim value stores some outdated or wrong information, we ignore it. The
         // deprecated annotation indicates that this piece of information should be ignored
         if claim_value.rank != Rank::Deprecated {
             if let Err(error) = Table::from(claim_value.data).insert(
                 appender_helper,
-                src_id,                         // identifier of the entity
-                entity.labels.get(&LANG),       // label of the entity for a certain language
-                entity.descriptions.get(&LANG), // description of the entity for a certain language
+                src_id, // identifier of the entity
                 u64::from(Id::Pid(property_id)),
             ) {
                 return Err(format!("Error inserting into TABLE: {:?}", error));
@@ -279,20 +295,26 @@ fn main() -> Result<(), String> {
         return Err(format!("Error creating tables. {}", error));
     }
 
+    if let Err(error) = create_indices(&connection) {
+        return Err(format!("Error creating indices. {}", error));
+    }
+
     // Transactions can improve performance by reducing the number of disk
     // writes and network round trips. When you wrap multiple inserts within a transaction,
     // the database can optimize the write operations by batching them together and
     // committing them as a single unit. This can reduce the overhead of repeated disk I/O
     // operations and improve overall insert speed.
-    let transaction = match connection.transaction() {
+    let mut transaction = match connection.transaction() {
         Ok(transaction) => transaction,
         Err(error) => return Err(format!("Error opening transaction. {}", error)),
     };
 
+    // We set the drop behavior to commit so that the transaction is committed when it is dropped.
+    transaction.set_drop_behavior(DropBehavior::Commit);
+
     // Appenders also allow inserting entities in a better fashion. This allows a faster
     // performance and an easier implementation of the algorithm
     let mut appender_helper = AppenderHelper::new(&transaction);
-
     reader
         .lines() // we retrieve the iterator over the lines in the
         .enumerate() // we enumerate the iterator so we can know the line number
@@ -313,13 +335,7 @@ fn main() -> Result<(), String> {
             },
         );
 
-    if let Err(error) = create_indices(&transaction) {
-        return Err(format!("Error creating indices. {}", error));
-    }
-
     // -*- JSON to .DUCKDB ALGORITHM Ends here -*-
-
-    print_progress(0, start_time);
 
     Ok(())
 }

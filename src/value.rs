@@ -1,5 +1,5 @@
 use chrono::{DateTime, Datelike, Utc};
-use duckdb::{params, Appender, Error, Transaction};
+use duckdb::{params, Appender, Connection, Error, Transaction};
 use lazy_static::lazy_static;
 use std::{collections::HashMap, slice::Iter};
 use wikidata::ClaimValueData;
@@ -15,7 +15,7 @@ use crate::{id::Id, LANG};
 /// Appender<'a>>` in a struct called `AppenderHelper`. It is a hash map that stores
 /// references to `Appender` objects, with keys of type `&'a str`.
 pub struct AppenderHelper<'a> {
-    appenders: HashMap<&'a str, Appender<'a>>,
+    pub(crate) appenders: HashMap<&'a str, Appender<'a>>,
 }
 
 /// The above code is implementing a new method for the `AppenderHelper` struct in
@@ -219,8 +219,6 @@ impl Table {
         &self,
         appender_helper: &mut AppenderHelper,
         src_id: u64,
-        label: Option<&String>,
-        description: Option<&String>,
         property_id: u64,
     ) -> Result<(), Error> {
         // Note the schema of the Database we are working with. In this regard, we have two main
@@ -233,85 +231,55 @@ impl Table {
         // ACK: See https://github.com/angelip2303/wd2duckdb#database-structure for a more detailed
         // description of the data model we are creating with this tool.
 
-        // 1. First, we have to create the Vertex entry in the database
-        appender_helper
-            .appenders
-            .get_mut("vertex")
-            .unwrap()
-            .append_row(params![src_id, label, description])?;
+        let appender = appender_helper.appenders.get_mut(self.as_ref()).unwrap();
 
-        // 2. Second, we create the edge
         match self {
-            Table::Entity(dst_id) => appender_helper
-                .appenders
-                .get_mut(self.as_ref())
-                .unwrap()
-                .append_row(params![src_id, property_id, dst_id])?,
-            Table::None => appender_helper
-                .appenders
-                .get_mut(self.as_ref())
-                .unwrap()
-                .append_row(params![src_id, property_id, src_id])?,
-            Table::Unknown => appender_helper
-                .appenders
-                .get_mut(self.as_ref())
-                .unwrap()
-                .append_row(params![src_id, property_id, src_id])?,
-            Table::String(string) => appender_helper
-                .appenders
-                .get_mut(self.as_ref())
-                .unwrap()
-                .append_row(params![src_id, property_id, src_id, string])?,
+            Table::Entity(dst_id) => appender.append_row(params![src_id, property_id, dst_id])?,
+            Table::None => appender.append_row(params![src_id, property_id, src_id])?,
+            Table::Unknown => appender.append_row(params![src_id, property_id, src_id])?,
+            Table::String(string) => {
+                appender.append_row(params![src_id, property_id, src_id, string])?
+            }
             Table::Coordinates {
                 latitude,
                 longitude,
                 precision,
                 globe_id,
-            } => appender_helper
-                .appenders
-                .get_mut(self.as_ref())
-                .unwrap()
-                .append_row(params![
-                    src_id,
-                    property_id,
-                    src_id,
-                    latitude,
-                    longitude,
-                    precision,
-                    globe_id
-                ])?,
+            } => appender.append_row(params![
+                src_id,
+                property_id,
+                src_id,
+                latitude,
+                longitude,
+                precision,
+                globe_id
+            ])?,
             Table::Quantity {
                 amount,
                 lower_bound,
                 upper_bound,
                 unit_id,
-            } => appender_helper
-                .appenders
-                .get_mut(self.as_ref())
-                .unwrap()
-                .append_row(params![
-                    src_id,
-                    property_id,
-                    src_id,
-                    amount,
-                    lower_bound,
-                    upper_bound,
-                    unit_id
-                ])?,
+            } => appender.append_row(params![
+                src_id,
+                property_id,
+                src_id,
+                amount,
+                lower_bound,
+                upper_bound,
+                unit_id
+            ])?,
             Table::Time { time, precision } => {
                 // We have to handle years wich are greater than the maximum possible value :D
                 if time.year() < 9999 {
-                    appender_helper
-                        .appenders
-                        .get_mut(self.as_ref())
-                        .unwrap()
-                        .append_row(params![src_id, property_id, src_id, time, precision])?
+                    appender.append_row(params![src_id, property_id, src_id, time, precision])?
                 } else {
-                    appender_helper
-                        .appenders
-                        .get_mut(self.as_ref())
-                        .unwrap()
-                        .append_row(params![src_id, property_id, src_id, "infinity", precision])?
+                    appender.append_row(params![
+                        src_id,
+                        property_id,
+                        src_id,
+                        "infinity",
+                        precision
+                    ])?
                 }
             }
             _ => return Err(Error::AppendError),
@@ -361,7 +329,7 @@ impl Table {
     /// a `Result` enum with either an `Ok(())` value indicating that the indices were
     /// successfully created, or an `Err` value containing an `Error` object if an error
     /// occurred during the execution of the function.
-    pub fn create_indices(&self, transaction: &Transaction) -> Result<(), Error> {
+    pub fn create_indices(&self, connection: &Connection) -> Result<(), Error> {
         let (table_name, columns) = self.table_definition();
 
         for (column_name, _) in columns {
@@ -371,7 +339,7 @@ impl Table {
             // in querying over columns that just annotate the node with additional information, such
             // as the description, or the label in a certain language :(
             if column_name == "src_id" || column_name == "dst_id" {
-                transaction.execute_batch(&format!(
+                connection.execute_batch(&format!(
                     "CREATE INDEX IF NOT EXISTS {}_{}_index ON {} ({});",
                     table_name, column_name, table_name, column_name,
                 ))?;
