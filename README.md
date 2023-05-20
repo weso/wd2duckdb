@@ -3,14 +3,24 @@
 `wd2duckdb` is a tool transforming
 [Wikidata](https://www.wikidata.org/wiki/Wikidata:Main_Page) JSON dumps
 into a fully indexed DuckDB database ~80% smaller than the original
-dump, yet contains most of its information. The resulting database enables
-high-performance queries to be executed on commodity hardware without the
-need to install and configure specialized triplestore software. This project
-is heavily based on [wd2sql](https://github.com/p-e-w/wd2sql).
+dump, yet contains most of its information. Note that only the English version of
+the Wikidata items are stored. For you to change so, please refer to 
+[this line in the code](https://github.com/angelip2303/wd2duckdb/blob/777f47d4ed386e79dba0d8529fced0efb78c6325/src/main.rs#LL23C1).
+The resulting database enables high-performance queries to be executed on commodity
+hardware without the need to install and configure specialized triplestore software. 
+This project is heavily based on [wd2sql](https://github.com/p-e-w/wd2sql).
 
 ## Installation
 
-TBD
+Make sure that you install the latest stable version of 
+[Rust](https://www.rust-lang.org/); that is, as of May the 5th, version 1.69 or
+later, then run:
+
+```
+cargo install wd2duckdb
+```
+
+This will compile `wd2duckdb` for your native architecture, increasing the performance.
 
 ## Usage
 
