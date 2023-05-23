@@ -40,30 +40,30 @@ impl<'a> AppenderHelper<'a> {
 
 /// The above code is defining an enum called `Table` in Rust programming language.
 /// The enum has several variants including `Vertex` which has fields `id`, `label`,
-/// and `description`, `Entity` which has a single field `u64`, `String` which has a
+/// and `description`, `Entity` which has a single field `u32`, `String` which has a
 /// single field `String`, `Coordinates` which has fields `latitude`, `longitude`,
 /// `precision`, and `globe_id`, `Quantity` which has fields `amount`,
 /// `lower_bound`, `upper_bound`, and `unit_id`, `Time` which has fields `time` and
 /// `precision`, `Unknown`,
 pub enum Table {
     Vertex {
-        id: u64,
+        id: u32,
         label: String,
         description: String,
     },
-    Entity(u64),
+    Entity(u32),
     String(String),
     Coordinates {
         latitude: f64,
         longitude: f64,
         precision: f64,
-        globe_id: u64,
+        globe_id: u32,
     },
     Quantity {
         amount: f64,
         lower_bound: Option<f64>,
         upper_bound: Option<f64>,
-        unit_id: Option<u64>,
+        unit_id: Option<u32>,
     },
     Time {
         time: DateTime<Utc>,
@@ -141,7 +141,7 @@ impl Table {
     /// Output:
     /// ```
     /// Table name: string
-    /// Columns: [("src_id", "UBIGINT NOT NULL"), ("property_id", "UBIGINT NOT NULL"), ("dst_id", "UBIGINT NOT NULL"), ("string", "TEXT NOT NULL")]
+    /// Columns: [("src_id", "UINTEGER NOT NULL"), ("property_id", "UINTEGER NOT NULL"), ("dst_id", "UINTEGER NOT NULL"), ("string", "TEXT NOT NULL")]
     /// ```
     fn table_definition(&self) -> (&str, Vec<(&str, &str)>) {
         if let Table::Vertex { .. } = self {
@@ -149,7 +149,7 @@ impl Table {
             return (
                 Table::iterator().next().unwrap().as_ref(),
                 vec![
-                    ("id", "INTEGER NOT NULL"),
+                    ("id", "UINTEGER NOT NULL"),
                     ("label", "TEXT"),
                     ("description", "TEXT"),
                 ],
@@ -157,9 +157,9 @@ impl Table {
         }
 
         let mut columns: Vec<(&str, &str)> = vec![
-            ("src_id", "UBIGINT NOT NULL"),
-            ("property_id", "UBIGINT NOT NULL"),
-            ("dst_id", "UBIGINT NOT NULL"),
+            ("src_id", "UINTEGER NOT NULL"),
+            ("property_id", "UINTEGER NOT NULL"),
+            ("dst_id", "UINTEGER NOT NULL"),
         ];
 
         // For the sake of simplicity, those entities that annotate no additional value; that is,
@@ -173,13 +173,13 @@ impl Table {
                 ("latitude", "DOUBLE NOT NULL"),
                 ("longitude", "DOUBLE NOT NULL"),
                 ("precision", "DOUBLE NOT NULL"),
-                ("globe_id", "INTEGER NOT NULL"),
+                ("globe_id", "UINTEGER NOT NULL"),
             ],
             Table::Quantity { .. } => vec![
                 ("amount", "DOUBLE NOT NULL"),
                 ("lower_bound", "DOUBLE"),
                 ("upper_bound", "DOUBLE"),
-                ("unit_id", "INTEGER"),
+                ("unit_id", "UINTEGER"),
             ],
             Table::Time { .. } => vec![
                 ("time", "DATETIME NOT NULL"),
@@ -218,8 +218,8 @@ impl Table {
     pub fn insert(
         &self,
         appender_helper: &mut AppenderHelper,
-        src_id: u64,
-        property_id: u64,
+        src_id: u32,
+        property_id: u32,
     ) -> Result<(), Error> {
         // Note the schema of the Database we are working with. In this regard, we have two main
         // entities which include Vertex and Edge; those act as the two pieces that together form
@@ -385,10 +385,10 @@ impl From<ClaimValueData> for Table {
                 latitude: lat,
                 longitude: lon,
                 precision,
-                globe_id: u64::from(Id::Qid(globe)),
+                globe_id: u32::from(Id::Qid(globe)),
             },
-            Item(id) => Self::Entity(u64::from(Id::Qid(id))),
-            Property(id) => Self::Entity(u64::from(Id::Pid(id))),
+            Item(id) => Self::Entity(u32::from(Id::Qid(id))),
+            Property(id) => Self::Entity(u32::from(Id::Pid(id))),
             String(string) => Self::String(string),
             MonolingualText(text) => Self::String(text.text),
             MultilingualText(texts) => {
@@ -409,7 +409,7 @@ impl From<ClaimValueData> for Table {
                 amount,
                 lower_bound,
                 upper_bound,
-                unit_id: unit.map(|id| u64::from(Id::Qid(id))),
+                unit_id: unit.map(|id| u32::from(Id::Qid(id))),
             },
             DateTime {
                 date_time,
@@ -423,9 +423,9 @@ impl From<ClaimValueData> for Table {
             GeoShape(string) => Self::String(string),
             MusicNotation(string) => Self::String(string),
             TabularData(string) => Self::String(string),
-            Lexeme(id) => Self::Entity(u64::from(Id::Lid(id))),
-            Form(id) => Self::Entity(u64::from(Id::Fid(id))),
-            Sense(id) => Self::Entity(u64::from(Id::Sid(id))),
+            Lexeme(id) => Self::Entity(u32::from(Id::Lid(id))),
+            Form(id) => Self::Entity(u32::from(Id::Fid(id))),
+            Sense(id) => Self::Entity(u32::from(Id::Sid(id))),
             NoValue => Self::None,
             UnknownValue => Self::Unknown,
         }

@@ -180,7 +180,7 @@ fn insert_entity(
 fn store_entity(appender_helper: &mut AppenderHelper, entity: Entity) -> Result<(), String> {
     use wikidata::WikiId::*;
 
-    let src_id = u64::from(match entity.id {
+    let src_id = u32::from(match entity.id {
         EntityId(id) => Id::Qid(id),
         PropertyId(id) => Id::Pid(id),
         LexemeId(id) => Id::Lid(id),
@@ -211,7 +211,7 @@ fn store_entity(appender_helper: &mut AppenderHelper, entity: Entity) -> Result<
             if let Err(error) = Table::from(claim_value.data).insert(
                 appender_helper,
                 src_id, // identifier of the entity
-                u64::from(Id::Pid(property_id)),
+                u32::from(Id::Pid(property_id)),
             ) {
                 return Err(format!("Error inserting into TABLE: {:?}", error));
             }

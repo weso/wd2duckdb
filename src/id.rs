@@ -46,24 +46,24 @@ impl<'a> From<&'a str> for Id {
     }
 }
 
-/// This code defines a conversion function from an `Id` enum to a `u64` integer.
+/// This code defines a conversion function from an `Id` enum to a `u32` integer.
 /// The function takes an `Id` value as input and matches on its variant to
 /// determine the type of ID. Depending on the type of ID, the function performs a
-/// different calculation to convert it to a `u64` integer. For example, if the `Id`
+/// different calculation to convert it to a `u32` integer. For example, if the `Id`
 /// is a `Fid` (form ID), the function converts its corresponding `Lid` (lexeme ID)
-/// to a `u64` integer and adds the form ID's numeric suffix multiplied by 100
-/// billion. The resulting `u64` integer is returned. This conversion function
+/// to a `u32` integer and adds the form ID's numeric suffix multiplied by 100
+/// billion. The resulting `u32` integer is returned. This conversion function
 /// allows for easy comparison and manipulation of different types of IDs in the
 /// code.
-impl From<Id> for u64 {
+impl From<Id> for u32 {
     fn from(id: Id) -> Self {
         match id {
-            Id::Fid(fid) => u64::from(Id::Lid(fid.0)) + (fid.1 as u64 * 100_000_000_000),
-            Id::Lid(lid) => lid.0 + 2_000_000_000,
-            Id::Pid(pid) => pid.0 + 1_000_000_000,
-            Id::Qid(qid) => qid.0,
+            Id::Fid(fid) => u32::from(Id::Lid(fid.0)) + (fid.1 as u32 * 3_000_000_000),
+            Id::Lid(lid) => lid.0 as u32 + 2_000_000_000,
+            Id::Pid(pid) => pid.0 as u32 + 1_000_000_000,
+            Id::Qid(qid) => qid.0 as u32,
             Id::Sid(sid) => {
-                u64::from(Id::Lid(sid.0)) + (sid.1 as u64 * 100_000_000_000) + 10_000_000_000
+                u32::from(Id::Lid(sid.0)) + (sid.1 as u32 * 3_000_000_000) + 500_000_000
             }
         }
     }
