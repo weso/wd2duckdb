@@ -15,7 +15,7 @@ use crate::{id::Id, LANG};
 /// Appender<'a>>` in a struct called `AppenderHelper`. It is a hash map that stores
 /// references to `Appender` objects, with keys of type `&'a str`.
 pub struct AppenderHelper<'a> {
-    pub(crate) appenders: HashMap<&'a str, Appender<'a>>,
+    pub appenders: HashMap<&'a str, Appender<'a>>,
 }
 
 /// The above code is implementing a new method for the `AppenderHelper` struct in

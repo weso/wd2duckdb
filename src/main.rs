@@ -1,29 +1,22 @@
 #![feature(byte_slice_trim_ascii)]
 
-mod id;
-mod value;
-
 use clap::Parser;
 use duckdb::{params, Connection, DropBehavior, Error};
 use humantime::format_duration;
-use lazy_static::lazy_static;
 use std::fs::File;
 use std::io::{stdin, stdout, BufRead, BufReader, Read, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
-use value::AppenderHelper;
-use wikidata::{Entity, Lang, Rank};
+use wikidata::{Entity, Rank};
 
-use crate::id::Id;
-use crate::value::Table;
+use wikidata_rs::id::Id;
+use wikidata_rs::value::AppenderHelper;
+use wikidata_rs::value::Table;
+use wikidata_rs::{INSERTS_PER_TRANSACTION, LANG};
 
-// Allows the declaration of Global variables using functions inside of them. In this case,
-// lazy_static! environment allows calling the to_owned function
-lazy_static! {
-    static ref LANG: Lang = Lang("en".to_owned());
-    static ref CHUNK_SIZE: usize = 50_000_000;
-    static ref INSERTS_PER_TRANSACTION: usize = 1_000;
-}
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static ALLOCATOR: jemallocator::Jemalloc = jemallocator::Jemalloc;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
