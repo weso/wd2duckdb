@@ -10,8 +10,11 @@ edition = "2021"
 keywords = ["wikidata", "duckdb", "json", "dump", "database"]
 categories = ["algorithms", "database", "mathematics", "science"]
 
+[workspace]
+members = ["wikidata-rs"]
+
 [dependencies]
-wikidata-rs = { path = "wikidata-rs" }
+wikidata-rs = { path="./wikidata-rs" }
 clap = { version = "4.1.8", features = ["derive"] }
 humantime = "2.1.0"
 duckdb = { version="0.7.1", features = ["chrono", "bundled"] }
