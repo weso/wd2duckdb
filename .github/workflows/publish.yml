@@ -16,4 +16,5 @@ jobs:
           override: true
     - uses: katyo/publish-crates@v2
       with:
+        path: './wikidata-rs'
           registry-token: ${{ secrets.CARGO_TOKEN }}

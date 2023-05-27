@@ -17,6 +17,14 @@ pub enum DataType {
     Entity,
 }
 
+/// This code defines an implementation of the `AsRef` trait for the `DataType`
+/// enum, which allows instances of the enum to be converted into a reference to a
+/// string slice (`&str`). The `as_ref` method is called on an instance of the
+/// `DataType` enum and returns a reference to a string slice that corresponds to
+/// the variant of the enum. For example, if `DataType::Quantity` is passed to
+/// `as_ref`, it will return the string slice `"quantity"`. This implementation is
+/// useful for cases where a `&str` reference is needed instead of an enum variant,
+/// such as when constructing error messages or logging information.
 impl AsRef<str> for DataType {
     fn as_ref(&self) -> &str {
         match self {
