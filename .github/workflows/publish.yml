@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: ./wikidata-rs
+        working-directory: wikidata-rs
     steps:
     - uses: actions/checkout@v3
     - uses: actions-rs/toolchain@v1
@@ -19,5 +19,5 @@ jobs:
           override: true
     - uses: katyo/publish-crates@v2
       with:
-          path: ./wikidata-rs
+          path: wikidata-rs
           registry-token: ${{ secrets.CARGO_TOKEN }}
