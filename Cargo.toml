@@ -13,8 +13,11 @@ categories = ["algorithms", "database", "mathematics", "science"]
 [workspace]
 members = ["wikidata-rs"]
 
+[workspace.package]
+version = "0.0.1"
+
 [dependencies]
-wikidata-rs = { path="./wikidata-rs" }
+wikidata-rs = { version="0.0.1", path="./wikidata-rs" }
 clap = { version = "4.1.8", features = ["derive"] }
 humantime = "2.1.0"
 duckdb = { version="0.7.1", features = ["chrono", "bundled"] }

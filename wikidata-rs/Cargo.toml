@@ -1,6 +1,6 @@
 [package]
 name = "wikidata-rs"
-version = "0.0.1"
+version.workspace = true
 authors = [ "Ángel Iglesias Préstamo <angel.iglesias.prestamo@gmail.com>" ]
 description = "Utilities for working with Wikidata entities programmatically"
 repository = "https://github.com/angelip2303/wd2duckdb"
