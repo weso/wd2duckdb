@@ -57,7 +57,7 @@ which is more memory-efficient, may thus be created immediately.
 ## Database structure
 
 <p align="center">
-  <img src="https://user-images.githubusercontent.com/65736636/231005674-15ea422c-2830-4c1d-a925-3da16da79b39.png" />
+  <img src="https://github.com/angelip2303/wd2duckdb/assets/65736636/d1380df4-834e-44a6-9b44-b6943ab1afc5" />
 </p>
 
 ## Acknowledgments
