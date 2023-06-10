@@ -1,6 +1,6 @@
 [package]
 name = "wikidata-rs"
-version = "0.0.1"
+version = "0.0.2"
 authors = [ "Ángel Iglesias Préstamo <angel.iglesias.prestamo@gmail.com>" ]
 description = "Utilities for working with Wikidata entities programmatically"
 repository = "https://github.com/angelip2303/wd2duckdb"
@@ -15,6 +15,6 @@ duckdb = { version = "0.7.1", features = ["chrono"] }
 chrono = "0.4.23"
 lazy_static = "1.4.0"
 wikidata = "0.3.0"
-polars = { version = "0.29.0", features = ["lazy", "dtype-u8"]}
+polars = { version = "0.30.0", features = ["lazy", "dtype-u8"]}
 strum = "0.24.1"
 strum_macros = "0.24"

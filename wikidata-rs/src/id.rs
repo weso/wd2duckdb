@@ -1,3 +1,4 @@
+use crate::dtype::DataType;
 use wikidata::{Fid, Lid, Pid, Qid, Sid};
 
 /// The `Id` enum is defining different types of identifiers that can be used in the
@@ -11,6 +12,7 @@ pub enum Id {
     Pid(Pid),
     Qid(Qid),
     Sid(Sid),
+    DataType(DataType),
 }
 
 /// This code defines a conversion function from a string slice (`&str`) to an `Id`
@@ -41,7 +43,15 @@ impl<'a> From<&'a str> for Id {
                     parts.next().unwrap()[1..].parse::<u16>().unwrap(),
                 ))
             }
-            _ => panic!("Invalid ID: {}", value),
+            Some("@") => match &value[1..] {
+                "Quantity" => Self::DataType(DataType::Quantity),
+                "Coordinate" => Self::DataType(DataType::Coordinate),
+                "String" => Self::DataType(DataType::String),
+                "DateTime" => Self::DataType(DataType::DateTime),
+                "Entity" => Self::DataType(DataType::Entity),
+                &_ => panic!("Unknown data type: {}", value),
+            },
+            _ => panic!("Not valid value: {}", value),
         }
     }
 }
@@ -65,6 +75,7 @@ impl From<Id> for u32 {
             Id::Sid(sid) => {
                 u32::from(Id::Lid(sid.0)) + (sid.1 as u32 * 3_000_000_000) + 500_000_000
             }
+            Id::DataType(dt) => u8::from(&dt) as u32 + 4_000_000_000,
         }
     }
 }
