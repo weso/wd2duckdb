@@ -11,7 +11,7 @@ keywords = ["wikidata", "duckdb", "json", "dump", "database"]
 categories = ["algorithms", "database", "mathematics", "science"]
 
 [dependencies]
-wikidata-rs = { version="0.0.1" }
+wikidata-rs = { version="0.0.4" }
 clap = { version = "4.1.8", features = ["derive"] }
 humantime = "2.1.0"
 duckdb = { version="0.7.1", features = ["chrono", "bundled"] }

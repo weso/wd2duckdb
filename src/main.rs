@@ -311,22 +311,19 @@ fn main() -> Result<(), String> {
     reader
         .lines() // we retrieve the iterator over the lines in the
         .enumerate() // we enumerate the iterator so we can know the line number
-        .for_each(
-            // for each line in the parallel iterator ...
-            |(line_number, line)| {
-                // try to insert the entity in the database and handle errors appropriately
-                if let Err(error) =
-                    insert_entity(&mut appender_helper, line.unwrap(), line_number as u32)
-                {
-                    // do not halt execution in case an error happens, just warn the user :D
-                    eprintln!("Error inserting entity. {}", error);
-                }
+        .for_each(|(line_number, line)| {
+            // try to insert the entity in the database and handle errors appropriately
+            if let Err(error) =
+                insert_entity(&mut appender_helper, line.unwrap(), line_number as u32)
+            {
+                // do not halt execution in case an error happens, just warn the user :D
+                eprintln!("Error inserting entity. {}", error);
+            }
 
-                if line_number > 0 && line_number % INSERTS_PER_TRANSACTION.to_owned() == 0 {
-                    print_progress(line_number as u32, start_time);
-                }
-            },
-        );
+            if line_number > 0 && line_number % INSERTS_PER_TRANSACTION.to_owned() == 0 {
+                print_progress(line_number as u32, start_time);
+            }
+        });
 
     // -*- JSON to .DUCKDB ALGORITHM Ends here -*-
 
